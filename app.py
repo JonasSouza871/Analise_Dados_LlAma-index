@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 from fpdf import FPDF
 import tempfile, os
 from datetime import datetime
-import ast
 
 # ========================== LLM (Groq) ============================
 os.environ["secret_key"] = os.getenv("secret_key", "")
@@ -88,25 +87,88 @@ def processar_pergunta(q, df_state):
         resposta = ans.message.content
 
         if gerar_grafico:
-            codigo = resposta.split("`")[-2].strip()
-            exec_context = {"df": df_state, "plt": plt}
-            exec(codigo, exec_context)
+            codigo = resposta.split("`")[-2]  # extrai o código entre crases
+            resultado = eval(codigo, {"df": df_state, "plt": plt})
+            plt.figure()
+            resultado.plot()
+            img_path = os.path.join(tempfile.gettempdir(), f"grafico_{datetime.now().timestamp()}.png")
+            plt.savefig(img_path)
+            plt.close()
 
-            ult_var = None
-            for line in reversed(codigo.splitlines()):
-                if "=" in line:
-                    ult_var = line.split("=")[0].strip()
-                    break
-
-            if ult_var and ult_var in exec_context:
-                plt.figure()
-                exec_context[ult_var].plot()
-                img_path = os.path.join(tempfile.gettempdir(), f"grafico_{datetime.now().timestamp()}.png")
-                plt.savefig(img_path)
-                plt.close()
-
-        return resposta, img_path, img_path
+        return resposta, img_path, img_path  # mostra e salva no histórico
     except Exception as e:
         return f"Erro no pipeline: {e}", None, None
 
-# (demais funções permanecem inalteradas)
+def add_historico(perg, resp, img_path, hist):
+    hist.append((perg, resp, img_path))
+    return hist
+
+def gerar_pdf(hist):
+    if not hist:
+        return None, "Histórico vazio."
+    try:
+        data_atual = datetime.now().strftime("%d-%m-%Y")
+        nome_pdf = f"relatorio_{data_atual}.pdf"
+        caminho_pdf = os.path.join(tempfile.gettempdir(), nome_pdf)
+
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 16)
+        pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align="C")
+        pdf.ln(8)
+
+        for i, (p, r, img) in enumerate(hist, 1):
+            pdf.set_font("Arial", "B", 12)
+            pdf.multi_cell(0, 7, f"Pergunta {i}: {p}")
+            pdf.set_font("Arial", "", 12)
+            pdf.multi_cell(0, 6, r)
+            if img and os.path.exists(img):
+                pdf.ln(2)
+                pdf.image(img, w=160)
+            pdf.ln(4)
+
+        pdf.output(caminho_pdf)
+        return caminho_pdf, "PDF gerado com sucesso!"
+    except Exception as e:
+        return None, f"Erro ao gerar o PDF: {e}"
+
+def limpar(): return "", "", None
+
+def reset():
+    return None, "Upload novo.", pd.DataFrame(), "", None, [], "", None
+
+# ========================== INTERFACE GRADIO =======================
+with gr.Blocks(theme="Soft") as app:
+    gr.Markdown("# Analisando os dados 🔎🎲")
+
+    f_upload = gr.File(label="Upload CSV/Excel", type="filepath")
+    up_status = gr.Textbox(label="Status upload")
+    df_head = gr.DataFrame()
+
+    pergunta = gr.Textbox(label="Pergunta")
+    btn_send = gr.Button("Enviar")
+    resp = gr.Textbox(label="Resposta")
+    grafico = gr.Image(label="Gráfico Gerado")
+
+    with gr.Row():
+        btn_clr  = gr.Button("Limpar pergunta e resultado")
+        btn_hist = gr.Button("Adicionar ao histórico do PDF")
+        btn_pdf  = gr.Button("Gerar PDF")
+
+    pdf_file   = gr.File(label="Download do PDF")
+    pdf_status = gr.Textbox(label="Status do PDF")
+    btn_reset  = gr.Button("Quero analisar outro dataset!")
+
+    df_state   = gr.State(None)
+    hist_state = gr.State([])
+    img_state  = gr.State(None)
+
+    f_upload.change(carregar_dados, [f_upload, df_state], [up_status, df_head, df_state])
+    btn_send.click(processar_pergunta, [pergunta, df_state], [resp, grafico, img_state])
+    btn_clr.click(limpar, [], [pergunta, resp, grafico])
+    btn_hist.click(add_historico, [pergunta, resp, img_state, hist_state], [hist_state])
+    btn_pdf.click(gerar_pdf, [hist_state], [pdf_file, pdf_status])
+    btn_reset.click(reset, [], [f_upload, up_status, df_head, resp, pdf_file, hist_state, pergunta, grafico])
+
+if __name__ == "__main__":
+    app.launch()
