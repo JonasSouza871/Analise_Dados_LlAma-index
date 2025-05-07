@@ -6,6 +6,7 @@ import gradio as gr
 import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
+import tempfile
 import os
 
 # Configuração inicial
@@ -19,7 +20,7 @@ def descricao_colunas(df):
 
 # Configuração do pipeline de consulta
 def pipeline_consulta(df):
-    print("Colunas do DataFrame:", df.columns)  # Depuração
+    print("Colunas do DataFrame:", df.columns)
     instruction_str = (
         "1. Converta a consulta para código Python executável usando Pandas.\n"
         "2. A linha final do código deve ser uma expressão Python que possa ser chamada com `eval()`.\n"
@@ -50,7 +51,7 @@ def pipeline_consulta(df):
 
     pandas_prompt = PromptTemplate(pandas_prompt_str).partial_format(
         instruction_str=instruction_str,
-        df_str=df.head(5),  # Revertido para o original
+        df_str=df.head(5),
         colunas_detalhes=descricao_colunas(df)
     )
     pandas_output_parser = PandasInstructionParser(df)
@@ -78,13 +79,13 @@ def pipeline_consulta(df):
 
 # Função para carregar dados
 def carregar_dados(caminho_arquivo, df_estado):
-    print("Caminho do arquivo recebido:", caminho_arquivo)  # Depuração
+    print("Caminho do arquivo recebido:", caminho_arquivo)
     if not caminho_arquivo:
         return "Por favor, faça o upload de um arquivo CSV ou Excel.", pd.DataFrame(), df_estado
     
     try:
         ext = os.path.splitext(caminho_arquivo)[1].lower()
-        print("Extensão do arquivo:", ext)  # Depuração
+        print("Extensão do arquivo:", ext)
         if ext == '.csv':
             df = pd.read_csv(caminho_arquivo)
         elif ext in ['.xlsx', '.xls']:
@@ -92,25 +93,25 @@ def carregar_dados(caminho_arquivo, df_estado):
         else:
             return "Formato de arquivo não suportado. Use CSV ou Excel.", pd.DataFrame(), df_estado
         
-        print("DataFrame carregado:", df.head())  # Depuração
+        print("DataFrame carregado:", df.head())
         return "Arquivo carregado com sucesso!", df.head(), df
     except Exception as e:
-        print("Erro ao carregar arquivo:", str(e))  # Depuração
+        print("Erro ao carregar arquivo:", str(e))
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado
 
 # Função para processar pergunta
 def processar_pergunta(pergunta, df_estado):
-    print("Pergunta recebida:", pergunta)  # Depuração
-    print("Estado do DataFrame:", df_estado)  # Depuração
+    print("Pergunta recebida:", pergunta)
+    print("Estado do DataFrame:", df_estado)
     if df_estado is not None and pergunta:
         try:
             qp = pipeline_consulta(df_estado)
-            print("Pipeline criado com sucesso")  # Depuração
+            print("Pipeline criado com sucesso")
             resposta = qp.run(query_str=pergunta)
-            print("Resposta do pipeline:", resposta)  # Depuração
+            print("Resposta do pipeline:", resposta)
             return resposta.message.content
         except Exception as e:
-            print("Erro no pipeline:", str(e))  # Depuração
+            print("Erro no pipeline:", str(e))
             return f"Erro no pipeline: {str(e)}"
     return "Por favor, carregue um arquivo e faça uma pergunta."
 
@@ -121,29 +122,31 @@ def add_historico(pergunta, resposta, historico_estado):
         return historico_estado, gr.Info("Adicionado ao histórico do PDF!")
     return historico_estado, gr.Info("Nenhuma pergunta/resposta para adicionar.")
 
-# Função para gerar PDF
+# ✅ Função corrigida para gerar PDF com tempfile
 def gerar_pdf(historico_estado):
     if not historico_estado:
         return None, "Nenhum dado para gerar o PDF."
 
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    caminho_pdf = f"relatorio_analise_{timestamp}.pdf"
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align='C')
+            pdf.ln(10)
 
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align='C')
-    pdf.ln(10)
-    
-    for i, (pergunta, resposta) in enumerate(historico_estado, 1):
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 8, f"Pergunta {i}: {pergunta}", ln=True)
-        pdf.set_font("Arial", '', 11)
-        pdf.multi_cell(0, 6, resposta)
-        pdf.ln(5)
+            for i, (pergunta, resposta) in enumerate(historico_estado, 1):
+                pdf.set_font("Arial", 'B', 12)
+                pdf.cell(0, 8, f"Pergunta {i}: {pergunta}", ln=True)
+                pdf.set_font("Arial", '', 11)
+                pdf.multi_cell(0, 6, resposta)
+                pdf.ln(5)
 
-    pdf.output(caminho_pdf)
-    return caminho_pdf, "PDF gerado com sucesso!"
+            pdf.output(tmp.name)
+            return tmp.name, "PDF gerado com sucesso!"
+    except Exception as e:
+        print("❌ Erro ao gerar o PDF:", str(e))
+        return None, f"Erro ao gerar o PDF: {str(e)}"
 
 # Função para limpar
 def limpar_pergunta_resposta():
@@ -153,7 +156,7 @@ def limpar_pergunta_resposta():
 def resetar_aplicacao():
     return None, "Aplicação resetada. Faça upload de um novo arquivo.", pd.DataFrame(), "", None, [], ""
 
-# Interface Gradio (revertida para o layout original)
+# Interface Gradio
 with gr.Blocks(theme='Soft') as app:
     gr.Markdown("# Analisando os dados🔎🎲")
     gr.Markdown('''
