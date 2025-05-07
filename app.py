@@ -332,7 +332,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=css) as app:
                 label="Upload do Arquivo (CSV ou Excel)",
                 file_types=[".csv", ".xlsx", ".xls"]
             )
-            upload_status = gr.Textbox(label="Status do Upload:", interactive=False)
+            upload_status = gr.Textbox(label="Status do Upload:")
     
     # Seção de visualização e análise exploratória
     with gr.Tabs() as tabs:
@@ -344,7 +344,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=css) as app:
             
             with gr.Row():
                 with gr.Column():
-                    resumo_dados = gr.JSON(label="Resumo do Dataset", interactive=False)
+                    resumo_dados = gr.JSON(label="Resumo do Dataset")
                 with gr.Column():
                     tipos_dados = gr.DataFrame(label="Tipos de Dados e Informações das Colunas")
             
@@ -393,8 +393,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=css) as app:
             with gr.Column():
                 output_resposta = gr.Textbox(
                     label="Resposta", 
-                    lines=10,
-                    interactive=False
+                    lines=10
                 )
                 
         with gr.Row():
