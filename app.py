@@ -1,3 +1,7 @@
+# ========================== DEPENDÊNCIAS ==========================
+# Se estiver no Colab, instale assim na 1ª célula:
+# !pip install llama-index llama-index-llms-groq gradio pandas openpyxl fpdf
+
 from llama_index.llms.groq import Groq
 from llama_index.core import PromptTemplate
 from llama_index.experimental.query_engine.pandas import PandasInstructionParser
@@ -7,14 +11,17 @@ import gradio as gr
 import pandas as pd
 from fpdf import FPDF
 import tempfile, os
+from datetime import datetime
 
-# 🔐 sua chave
-os.environ["secret_key"] = os.getenv("secret_key", "")   # ou defina direto
+# ========================== LLM (Groq) ============================
+os.environ["secret_key"] = os.getenv("secret_key", "")   # defina sua chave aqui
 llm = Groq(model="llama3-70b-8192", api_key=os.environ["secret_key"])
 
-# ───────── utilidades ──────────────────────────────────────────────
+# ========================== UTILIDADES ============================
 def descricao_colunas(df):
-    return "Detalhes das colunas do dataframe:\n" + "\n".join(f"`{c}`: {t}" for c, t in zip(df.columns, df.dtypes))
+    return "Detalhes das colunas do dataframe:\n" + "\n".join(
+        f"`{c}`: {t}" for c, t in zip(df.columns, df.dtypes)
+    )
 
 def pipeline_consulta(df):
     instruction_str = (
@@ -60,7 +67,7 @@ def pipeline_consulta(df):
     qp.add_link("rsp_prompt", "llm2")
     return qp
 
-# ───────── callbacks ───────────────────────────────────────────────
+# ========================== CALLBACKS =============================
 def carregar_dados(fp, df_state):
     if not fp:
         return "Faça upload de CSV/Excel.", pd.DataFrame(), df_state
@@ -83,31 +90,45 @@ def processar_pergunta(q, df_state):
 def add_historico(perg, resp, hist):
     if perg and resp:
         hist.append((perg, resp))
-    return hist               # ⬅️ somente 1 retorno
+    return hist  # Gradio espera somente 1 saída aqui
 
 def gerar_pdf(hist):
     if not hist:
         return None, "Histórico vazio."
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+
+    try:
+        data_atual = datetime.now().strftime("%d-%m-%Y")
+        nome_pdf = f"relatorio_{data_atual}.pdf"
+        caminho_pdf = os.path.join(tempfile.gettempdir(), nome_pdf)
+
         pdf = FPDF()
         pdf.add_page()
+
+        # Título
         pdf.set_font("Arial", "B", 16)
         pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align="C")
         pdf.ln(8)
+
+        # Conteúdo em Arial 12
         for i, (p, r) in enumerate(hist, 1):
             pdf.set_font("Arial", "B", 12)
             pdf.multi_cell(0, 7, f"Pergunta {i}: {p}")
-            pdf.set_font("Arial", "", 11)
+            pdf.set_font("Arial", "", 12)
             pdf.multi_cell(0, 6, r)
             pdf.ln(4)
-        pdf.output(tmp.name)
-        return tmp.name, "PDF gerado com sucesso!"
 
-def limpar(): return "", ""
+        pdf.output(caminho_pdf)
+        return caminho_pdf, "PDF gerado com sucesso!"
+    except Exception as e:
+        return None, f"Erro ao gerar o PDF: {e}"
+
+def limpar():  # limpa campos de pergunta/resultado
+    return "", ""
+
 def reset():
     return None, "Upload novo.", pd.DataFrame(), "", None, [], ""
 
-# ───────── UI ──────────────────────────────────────────────────────
+# ========================== INTERFACE GRADIO =======================
 with gr.Blocks(theme="Soft") as app:
     gr.Markdown("# Analisando os dados 🔎🎲")
 
@@ -120,23 +141,27 @@ with gr.Blocks(theme="Soft") as app:
     resp = gr.Textbox(label="Resposta")
 
     with gr.Row():
-        btn_clr = gr.Button("Limpar pergunta e resultado")
+        btn_clr  = gr.Button("Limpar pergunta e resultado")
         btn_hist = gr.Button("Adicionar ao histórico do PDF")
-        btn_pdf = gr.Button("Gerar PDF")
+        btn_pdf  = gr.Button("Gerar PDF")
 
-    pdf_file = gr.File(label="Download do PDF")
-    pdf_status = gr.Textbox(label="Status do PDF")        # novo textbox
-    btn_reset = gr.Button("Quero analisar outro dataset!")
+    pdf_file   = gr.File(label="Download do PDF")
+    pdf_status = gr.Textbox(label="Status do PDF")
+    btn_reset  = gr.Button("Quero analisar outro dataset!")
 
-    df_state = gr.State(None)
+    df_state  = gr.State(None)
     hist_state = gr.State([])
 
-    f_upload.change(carregar_dados, [f_upload, df_state], [up_status, df_head, df_state])
+    f_upload.change(carregar_dados, [f_upload, df_state],
+                    [up_status, df_head, df_state])
     btn_send.click(processar_pergunta, [pergunta, df_state], resp)
     btn_clr.click(limpar, [], [pergunta, resp])
     btn_hist.click(add_historico, [pergunta, resp, hist_state], [hist_state])
-    btn_pdf.click(gerar_pdf, [hist_state], [pdf_file, pdf_status])   # <-- 2 saídas
-    btn_reset.click(reset, [], [f_upload, up_status, df_head, resp, pdf_file, hist_state, pergunta])
+    btn_pdf.click(gerar_pdf, [hist_state], [pdf_file, pdf_status])
+    btn_reset.click(reset, [],
+                    [f_upload, up_status, df_head, resp,
+                     pdf_file, hist_state, pergunta])
 
 if __name__ == "__main__":
-    app.launch(share=True)   # se estiver no Colab use share=True
+    # ▸ use share=True no Colab para gerar link público
+    app.launch()
