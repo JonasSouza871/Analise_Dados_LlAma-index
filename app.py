@@ -25,18 +25,19 @@ llm = Groq(model=LLM_MODEL, api_key=API_KEY)
 
 # 📊  Helpers ---------------------------------------------------------
 def describe_cols(df: pd.DataFrame) -> str:
-    col_info = "\n".join(f"`{c}`: {t}" for c, t in zip(df.columns, df.dtypes))
+    col_info = "\n".join(f"{c}: {t}" for c, t in zip(df.columns, df.dtypes))
     return "Colunas do dataframe:\n" + col_info
 
 
 def build_pipeline(df: pd.DataFrame) -> QP:
     instruction_str = (
         "1. Converta a consulta para código Python executável usando Pandas.\n"
-        "2. A linha final deve ser uma **expressão**, sem `print`, capaz de ser avaliada por `eval()`.\n"
+        "2. A linha final deve ser uma expressão (sem print) que possa ser avaliada por eval().\n"
         "3. Não inclua aspas ao redor da expressão.\n"
     )
+
     pandas_prompt_tmpl = PromptTemplate(
-        """Você trabalha com um dataframe Pandas chamado `df`.
+        """Você trabalha com um dataframe Pandas chamado df.
 {colunas}
 Primeiras linhas:
 {df_head}
@@ -61,7 +62,7 @@ Saída: {pandas_output}
 
 Resposta:
 
-O código utilizado foi `{pandas_instructions}`"""
+O código utilizado foi {pandas_instructions}"""
     )
 
     pipeline = QP(
@@ -96,10 +97,8 @@ def load_file(file_path, df_state):
         if ext in {".csv", ".txt"}:
             df = pd.read_csv(file_path)
         elif ext in {".xlsx", ".xls", ".ods"}:
-            # Se houver várias sheets, pega a primeira por padrão
             with pd.ExcelFile(file_path) as xls:
-                sheet = xls.sheet_names[0]
-                df = pd.read_excel(xls, sheet_name=sheet)
+                df = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
         else:
             return "Formato não suportado.", pd.DataFrame(), df_state, ""
 
@@ -124,7 +123,6 @@ def ask_query(question, df_state):
 def add_to_history(q, a, hist):
     if q and a:
         hist.append((q, a))
-        return hist
     return hist
 
 
@@ -145,16 +143,9 @@ def make_pdf(hist):
     pdf.output(name)
     return name, "PDF gerado!"
 
+
 def reset_app():
-    return (
-        None,               # file upload
-        "",                 # status
-        pd.DataFrame(),     # preview
-        "",                 # resposta
-        None,               # pdf
-        [],                 # histórico
-        ""                  # pergunta
-    )
+    return None, "", pd.DataFrame(), "", None, [], ""
 
 
 # 🎨  Interface -------------------------------------------------------
@@ -162,40 +153,54 @@ soft = gr.themes.Soft(primary_hue="indigo", secondary_hue="slate")
 
 with gr.Blocks(theme=soft, title="Analisador de Dados") as demo:
     gr.HTML("<h1 style='text-align:center'>🔎 Analisador de Dados CSV/Excel</h1>")
-    estado_df = gr.State()
+    estado_df   = gr.State()
     estado_hist = gr.State([])
 
     with gr.Tabs():
         # TAB 1 – Dados
         with gr.TabItem("📂 Dados"):
             arquivo = gr.File(label="Upload CSV ou Excel", file_count="single", type="filepath")
-            status = gr.Markdown()
+            status  = gr.Markdown()
             preview = gr.DataFrame(interactive=True)
-            arquivo.change(load_file, [arquivo, estado_df],
-                           [status, preview, estado_df, preview])
+
+            arquivo.change(
+                load_file,
+                inputs=[arquivo, estado_df],
+                outputs=[status, preview, estado_df, preview],
+            )
+
         # TAB 2 – Perguntas
         with gr.TabItem("❓ Perguntas"):
-            pergunta = gr.Textbox(label="Pergunta")
-            btn_enviar = gr.Button("Enviar consulta", variant="primary", icon="🚀")
-            resposta = gr.Markdown()
+            pergunta   = gr.Textbox(label="Pergunta")
+            btn_enviar = gr.Button("Enviar consulta", variant="primary")
+            resposta   = gr.Markdown()
+
             btn_enviar.click(ask_query, [pergunta, estado_df], resposta)
 
-            gr.HorizontalRule()
+            gr.Markdown("---")    # separador horizontal
+
             with gr.Row():
-                btn_clear = gr.Button("Limpar", icon="🧹")
-                btn_add_hist = gr.Button("Adicionar ao histórico", icon="➕")
+                btn_clear    = gr.Button("Limpar")
+                btn_add_hist = gr.Button("Adicionar ao histórico")
+
             btn_clear.click(lambda: ("", ""), None, [pergunta, resposta])
             btn_add_hist.click(add_to_history, [pergunta, resposta, estado_hist], estado_hist)
 
         # TAB 3 – Histórico / PDF
         with gr.TabItem("📝 Histórico / PDF"):
-            hist_comp = gr.HighlightedText(label="Histórico (Q → A)")
-            btn_pdf = gr.Button("Gerar PDF", icon="📄")
+            hist_comp  = gr.HighlightedText(label="Histórico (Q → A)")
+            btn_pdf    = gr.Button("Gerar PDF")
             output_pdf = gr.File()
-            btn_pdf.click(make_pdf, estado_hist, [output_pdf, status])
-            estado_hist.change(lambda h: {"text": "\n\n".join(f"➡️ {q}\n{a}" for q, a in h)}, estado_hist, hist_comp)
 
-    gr.Button("🔄 Reiniciar aplicação", variant="stop", icon="♻️").click(
+            btn_pdf.click(make_pdf, estado_hist, [output_pdf, status])
+
+            # Atualiza a visualização do histórico
+            def hist_to_text(hist):
+                return {"text": "\n\n".join(f"➡️ {q}\n{a}" for q, a in hist)}
+            estado_hist.change(hist_to_text, estado_hist, hist_comp)
+
+    # Botão global de reset
+    gr.Button("🔄 Reiniciar aplicação", variant="stop").click(
         reset_app,
         None,
         [arquivo, status, preview, resposta, output_pdf, estado_hist, pergunta],
