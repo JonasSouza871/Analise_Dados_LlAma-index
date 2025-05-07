@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from fpdf import FPDF
 import tempfile, os
 from datetime import datetime
+import ast
 
 # ========================== LLM (Groq) ============================
 os.environ["secret_key"] = os.getenv("secret_key", "")
@@ -87,15 +88,16 @@ def processar_pergunta(q, df_state):
         resposta = ans.message.content
 
         if gerar_grafico:
-            codigo = resposta.split("`")[-2]  # extrai o código entre crases
-            resultado = eval(codigo, {"df": df_state, "plt": plt})
+            codigo = resposta.split("`")[-2].strip()
+            codigo_linha_unica = codigo.split("\n")[-1]  # usa somente a última linha
+            resultado = eval(codigo_linha_unica, {"df": df_state})
             plt.figure()
             resultado.plot()
             img_path = os.path.join(tempfile.gettempdir(), f"grafico_{datetime.now().timestamp()}.png")
             plt.savefig(img_path)
             plt.close()
 
-        return resposta, img_path, img_path  # mostra e salva no histórico
+        return resposta, img_path, img_path
     except Exception as e:
         return f"Erro no pipeline: {e}", None, None
 
