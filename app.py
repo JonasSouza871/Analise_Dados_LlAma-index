@@ -1,6 +1,6 @@
 # ========================== DEPENDÊNCIAS ==========================
-# Se estiver no Colab, instale assim na 1ª célula:
-# !pip install llama-index llama-index-llms-groq gradio pandas openpyxl fpdf
+# Execute no Colab:
+# !pip install llama-index llama-index-llms-groq gradio pandas openpyxl fpdf matplotlib
 
 from llama_index.llms.groq import Groq
 from llama_index.core import PromptTemplate
@@ -9,19 +9,18 @@ from llama_index.core.query_pipeline import QueryPipeline as QP, Link, InputComp
 
 import gradio as gr
 import pandas as pd
+import matplotlib.pyplot as plt
 from fpdf import FPDF
 import tempfile, os
 from datetime import datetime
 
 # ========================== LLM (Groq) ============================
-os.environ["secret_key"] = os.getenv("secret_key", "")   # defina sua chave aqui
+os.environ["secret_key"] = os.getenv("secret_key", "")
 llm = Groq(model="llama3-70b-8192", api_key=os.environ["secret_key"])
 
 # ========================== UTILIDADES ============================
 def descricao_colunas(df):
-    return "Detalhes das colunas do dataframe:\n" + "\n".join(
-        f"`{c}`: {t}" for c, t in zip(df.columns, df.dtypes)
-    )
+    return "Detalhes das colunas do dataframe:\n" + "\n".join(f"`{c}`: {t}" for c, t in zip(df.columns, df.dtypes))
 
 def pipeline_consulta(df):
     instruction_str = (
@@ -79,23 +78,34 @@ def carregar_dados(fp, df_state):
         return f"Erro: {e}", pd.DataFrame(), df_state
 
 def processar_pergunta(q, df_state):
+    img_path = None
     if df_state is None or q.strip() == "":
-        return "Carregue um arquivo e faça uma pergunta."
+        return "Carregue um arquivo e faça uma pergunta.", None, None
     try:
+        gerar_grafico = any(x in q.lower() for x in ["gráfico", "grafico", "plot"])
         ans = pipeline_consulta(df_state).run(query=q)
-        return ans.message.content
-    except Exception as e:
-        return f"Erro no pipeline: {e}"
+        resposta = ans.message.content
 
-def add_historico(perg, resp, hist):
-    if perg and resp:
-        hist.append((perg, resp))
-    return hist  # Gradio espera somente 1 saída aqui
+        if gerar_grafico:
+            codigo = resposta.split("`")[-2]  # extrai o código entre crases
+            resultado = eval(codigo, {"df": df_state, "plt": plt})
+            plt.figure()
+            resultado.plot()
+            img_path = os.path.join(tempfile.gettempdir(), f"grafico_{datetime.now().timestamp()}.png")
+            plt.savefig(img_path)
+            plt.close()
+
+        return resposta, img_path, img_path  # mostra e salva no histórico
+    except Exception as e:
+        return f"Erro no pipeline: {e}", None, None
+
+def add_historico(perg, resp, img_path, hist):
+    hist.append((perg, resp, img_path))
+    return hist
 
 def gerar_pdf(hist):
     if not hist:
         return None, "Histórico vazio."
-
     try:
         data_atual = datetime.now().strftime("%d-%m-%Y")
         nome_pdf = f"relatorio_{data_atual}.pdf"
@@ -103,18 +113,18 @@ def gerar_pdf(hist):
 
         pdf = FPDF()
         pdf.add_page()
-
-        # Título
         pdf.set_font("Arial", "B", 16)
         pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align="C")
         pdf.ln(8)
 
-        # Conteúdo em Arial 12
-        for i, (p, r) in enumerate(hist, 1):
+        for i, (p, r, img) in enumerate(hist, 1):
             pdf.set_font("Arial", "B", 12)
             pdf.multi_cell(0, 7, f"Pergunta {i}: {p}")
             pdf.set_font("Arial", "", 12)
             pdf.multi_cell(0, 6, r)
+            if img and os.path.exists(img):
+                pdf.ln(2)
+                pdf.image(img, w=160)
             pdf.ln(4)
 
         pdf.output(caminho_pdf)
@@ -122,11 +132,10 @@ def gerar_pdf(hist):
     except Exception as e:
         return None, f"Erro ao gerar o PDF: {e}"
 
-def limpar():  # limpa campos de pergunta/resultado
-    return "", ""
+def limpar(): return "", "", None
 
 def reset():
-    return None, "Upload novo.", pd.DataFrame(), "", None, [], ""
+    return None, "Upload novo.", pd.DataFrame(), "", None, [], "", None
 
 # ========================== INTERFACE GRADIO =======================
 with gr.Blocks(theme="Soft") as app:
@@ -139,6 +148,7 @@ with gr.Blocks(theme="Soft") as app:
     pergunta = gr.Textbox(label="Pergunta")
     btn_send = gr.Button("Enviar")
     resp = gr.Textbox(label="Resposta")
+    grafico = gr.Image(label="Gráfico Gerado")
 
     with gr.Row():
         btn_clr  = gr.Button("Limpar pergunta e resultado")
@@ -149,19 +159,16 @@ with gr.Blocks(theme="Soft") as app:
     pdf_status = gr.Textbox(label="Status do PDF")
     btn_reset  = gr.Button("Quero analisar outro dataset!")
 
-    df_state  = gr.State(None)
+    df_state   = gr.State(None)
     hist_state = gr.State([])
+    img_state  = gr.State(None)
 
-    f_upload.change(carregar_dados, [f_upload, df_state],
-                    [up_status, df_head, df_state])
-    btn_send.click(processar_pergunta, [pergunta, df_state], resp)
-    btn_clr.click(limpar, [], [pergunta, resp])
-    btn_hist.click(add_historico, [pergunta, resp, hist_state], [hist_state])
+    f_upload.change(carregar_dados, [f_upload, df_state], [up_status, df_head, df_state])
+    btn_send.click(processar_pergunta, [pergunta, df_state], [resp, grafico, img_state])
+    btn_clr.click(limpar, [], [pergunta, resp, grafico])
+    btn_hist.click(add_historico, [pergunta, resp, img_state, hist_state], [hist_state])
     btn_pdf.click(gerar_pdf, [hist_state], [pdf_file, pdf_status])
-    btn_reset.click(reset, [],
-                    [f_upload, up_status, df_head, resp,
-                     pdf_file, hist_state, pergunta])
+    btn_reset.click(reset, [], [f_upload, up_status, df_head, resp, pdf_file, hist_state, pergunta, grafico])
 
 if __name__ == "__main__":
-    # ▸ use share=True no Colab para gerar link público
     app.launch()
