@@ -144,20 +144,31 @@ def carregar_dados(caminho_arquivo, df_estado):
             df = pd.read_csv(caminho_arquivo)
         elif ext in ['.xlsx', '.xls']:
             df = pd.read_excel(caminho_arquivo)
+        elif ext == '.xlsb':
+            df = pd.read_excel(caminho_arquivo, engine='pyxlsb')
         else:
-            return "Formato de arquivo não suportado. Use CSV ou Excel.", pd.DataFrame(), df_estado
+            return "Formato de arquivo não suportado. Use CSV, Excel (.xlsx, .xls) ou Excel Binário (.xlsb).", pd.DataFrame(), df_estado
         return "Arquivo carregado com sucesso!", df.head(), df
     except Exception as e:
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado
 
-# Função para processar pergunta
+# Função para processar pergunta (ajustada)
 def processar_pergunta(pergunta, df_estado):
     if df_estado is not None and pergunta:
         try:
             qp = pipeline_consulta(df_estado)
             resposta = qp.run(query_str=pergunta)
-            resposta_texto = resposta.message.content
-
+            
+            # Verificar o tipo de resposta
+            print("Tipo de resposta:", type(resposta))  # Depuração
+            print("Resposta:", resposta)  # Depuração
+            
+            # Ajustar para lidar com o retorno do qp.run
+            if isinstance(resposta, str):
+                resposta_texto = resposta  # Se for string, usar diretamente
+            else:
+                resposta_texto = resposta.message.content  # Caso contrário, usar a estrutura antiga
+            
             # Verificar se a resposta menciona um gráfico
             if "Gráfico:" in resposta_texto:
                 # Extrair informações do gráfico
@@ -216,7 +227,7 @@ def limpar_pergunta_resposta():
 def resetar_aplicacao():
     return None, "Aplicação resetada. Faça upload de um novo arquivo.", pd.DataFrame(), "", None, [], "", None
 
-# Interface Gradio aprimorada
+# Interface Gradio
 with gr.Blocks(theme=THEME, css="""
     .gr-button {margin: 5px;}
     .gr-textbox {border-radius: 5px;}
@@ -235,19 +246,17 @@ with gr.Blocks(theme=THEME, css="""
     )
 
     with gr.Tabs():
-        # Aba para carregar dados
         with gr.Tab("Carregar Dados"):
             with gr.Row():
                 with gr.Column(scale=1):
                     input_arquivo = gr.File(
-                        file_types=[".csv", ".xlsx", ".xls"],
-                        label="Upload de Arquivo (CSV ou Excel)"
+                        file_types=[".csv", ".xlsx", ".xls", ".xlsb"],
+                        label="Upload de Arquivo (CSV, Excel ou Excel Binário)"
                     )
                     upload_status = gr.Textbox(label="Status do Upload", interactive=False)
                 with gr.Column(scale=2):
                     tabela_dados = gr.DataFrame(label="Prévia dos Dados", interactive=False)
 
-        # Aba para análise
         with gr.Tab("Análise de Dados"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -276,14 +285,11 @@ with gr.Blocks(theme=THEME, css="""
 
             arquivo_pdf = gr.File(label="Download do PDF")
 
-    # Botão de reset
     botao_resetar = gr.Button("Novo Conjunto de Dados", variant="secondary")
 
-    # Estados
     df_estado = gr.State(value=None)
     historico_estado = gr.State(value=[])
 
-    # Conexões
     input_arquivo.change(
         fn=carregar_dados,
         inputs=[input_arquivo, df_estado],
