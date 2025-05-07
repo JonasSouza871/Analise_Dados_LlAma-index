@@ -39,13 +39,23 @@ def descricao_colunas(df):
     desc = '\n'.join([f"`{col}`: {str(df[col].dtype)}" for col in df.columns])
     return "Detalhes das colunas do dataframe:\n" + desc
 
-# Função para plotar gráficos
+# Função para plotar gráficos (melhorada)
 def plotar_grafico(df, tipo_grafico, x_col=None, y_col=None, hue_col=None, title="Gráfico"):
-    print(f"Gerando gráfico: tipo={tipo_grafico}, x={x_col}, y={y_col}, hue={hue_col}")  # Depuração
     try:
         plt.figure(figsize=(8, 6))
         sns.set_style("whitegrid")
-        
+
+        # Verificar se as colunas existem
+        if x_col and x_col not in df.columns:
+            return None, f"Coluna '{x_col}' não encontrada no DataFrame"
+        if y_col and y_col not in df.columns:
+            return None, f"Coluna '{y_col}' não encontrada no DataFrame"
+        if hue_col and hue_col != "None" and hue_col not in df.columns:
+            return None, f"Coluna '{hue_col}' não encontrada no DataFrame"
+
+        # Converter hue_col para None se for "None"
+        hue_col = None if hue_col == "None" else hue_col
+
         if tipo_grafico == "bar":
             sns.barplot(data=df, x=x_col, y=y_col, hue=hue_col)
         elif tipo_grafico == "scatter":
@@ -61,19 +71,20 @@ def plotar_grafico(df, tipo_grafico, x_col=None, y_col=None, hue_col=None, title
         plt.title(title, fontsize=14, pad=15)
         plt.xlabel(x_col, fontsize=12)
         plt.ylabel(y_col, fontsize=12)
-        
+
         # Salvar o gráfico em um buffer
         buf = io.BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight")
+        plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
         buf.seek(0)
-        image = Image.open(buf)
         plt.close()
-        
-        # Converter a imagem para base64 para exibir no Gradio
+
+        # Converter a imagem para base64
+        image = Image.open(buf)
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         return f"data:image/png;base64,{img_str}", None
+
     except Exception as e:
         plt.close()
         return None, f"Erro ao gerar gráfico: {str(e)}"
@@ -107,7 +118,7 @@ def pipeline_consulta(df):
         "Instruções do Pandas (opcional):\n{pandas_instructions}\n\n"
         "Saída do Pandas: {pandas_output}\n\n"
         "Resposta: \n\n"
-        "Se a consulta pedir um gráfico, inclua na resposta as informações do gráfico (tipo, colunas usadas) no formato EXATO: 'Gráfico: tipo={tipo}, x={x}, y={y}, hue={hue}'. Por exemplo: 'Gráfico: tipo=bar, x=cidade, y=valores, hue=None'.\n"
+        "Se a consulta pedir um gráfico, inclua na resposta as informações do gráfico (tipo, colunas usadas) no formato EXATO: 'Gráfico: tipo={tipo}, x={x}, y={y}, hue={hue}'.\n"
         "Ao final, exibir o código usado para gerar a resposta, no formato: O código utilizado foi `{pandas_instructions}`"
     )
 
@@ -143,7 +154,7 @@ def pipeline_consulta(df):
 def carregar_dados(caminho_arquivo, df_estado):
     if not caminho_arquivo:
         return "Por favor, faça o upload de um arquivo CSV ou Excel.", pd.DataFrame(), df_estado
-    
+
     try:
         ext = os.path.splitext(caminho_arquivo)[1].lower()
         if ext == '.csv':
@@ -158,53 +169,51 @@ def carregar_dados(caminho_arquivo, df_estado):
     except Exception as e:
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado
 
-# Função para processar pergunta
+# Função para processar pergunta (melhorada)
 def processar_pergunta(pergunta, df_estado):
     if df_estado is not None and pergunta:
         try:
             qp = pipeline_consulta(df_estado)
             resposta = qp.run(query_str=pergunta)
-            
-            # Verificar o tipo de resposta
-            print("Tipo de resposta:", type(resposta))  # Depuração
-            print("Resposta:", resposta)  # Depuração
-            
-            # Ajustar para lidar com o retorno do qp.run
+
             if isinstance(resposta, str):
                 resposta_texto = resposta
             else:
                 resposta_texto = resposta.message.content
-            
-            # Verificar se a resposta menciona um gráfico
+
+            # Verificar se há menção a gráfico na resposta
             if "Gráfico:" in resposta_texto:
-                print("Gráfico detectado na resposta")  # Depuração
-                # Extrair informações do gráfico
                 grafico_info = re.search(r"Gráfico: tipo=(\w+), x=(\w+), y=(\w+), hue=(\w+)", resposta_texto)
                 if grafico_info:
                     tipo, x_col, y_col, hue_col = grafico_info.groups()
-                    print(f"Informações do gráfico extraídas: tipo={tipo}, x={x_col}, y={y_col}, hue={hue_col}")  # Depuração
-                    # Se hue for "None", ajustamos para None
                     hue_col = None if hue_col == "None" else hue_col
-                    # Gerar o gráfico
+
+                    # Verificar se as colunas existem no DataFrame
+                    if x_col not in df_estado.columns:
+                        return f"Erro: Coluna '{x_col}' não encontrada no DataFrame", None
+                    if y_col not in df_estado.columns:
+                        return f"Erro: Coluna '{y_col}' não encontrada no DataFrame", None
+                    if hue_col and hue_col not in df_estado.columns:
+                        return f"Erro: Coluna '{hue_col}' não encontrada no DataFrame", None
+
                     img_data, erro = plotar_grafico(df_estado, tipo, x_col, y_col, hue_col, title=pergunta)
                     if erro:
                         return f"Erro ao gerar gráfico: {erro}", None
                     return resposta_texto, img_data
-                else:
-                    print("Informações do gráfico não encontradas na resposta")  # Depuração
+
             return resposta_texto, None
         except Exception as e:
             return f"Erro no pipeline: {str(e)}", None
     return "Por favor, carregue um arquivo e faça uma pergunta.", None
 
-# Função para adicionar ao histórico (ajustada)
+# Função para adicionar ao histórico
 def add_historico(pergunta, resposta_texto, historico_estado):
     if pergunta and resposta_texto:
-        historico_estado.append((pergunta, resposta_texto))  # Adiciona apenas a parte textual
+        historico_estado.append((pergunta, resposta_texto))
         return historico_estado, gr.Info("Adicionado ao histórico do PDF!")
     return historico_estado, gr.Info("Nenhuma pergunta/resposta para adicionar.")
 
-# Função para gerar PDF (ajustada para tratar caracteres especiais)
+# Função para gerar PDF (melhorada)
 def gerar_pdf(historico_estado):
     if not historico_estado:
         return None, "Nenhum dado para gerar o PDF."
@@ -215,18 +224,22 @@ def gerar_pdf(historico_estado):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    
+
     try:
+        # Adicionar suporte a UTF-8
+        pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
+        pdf.set_font('DejaVu', '', 12)
+
         pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align='C')
         pdf.ln(10)
-        
+
         for i, (pergunta, resposta) in enumerate(historico_estado, 1):
-            pdf.set_font("Arial", 'B', 12)
-            # Tratar caracteres especiais
-            pergunta = pergunta.encode('latin-1', 'replace').decode('latin-1')
+            pdf.set_font('DejaVu', 'B', 12)
             pdf.cell(0, 8, f"Pergunta {i}: {pergunta}", ln=True)
-            pdf.set_font("Arial", '', 11)
-            resposta = resposta.encode('latin-1', 'replace').decode('latin-1')
+            pdf.set_font('DejaVu', '', 11)
+
+            # Tratar quebras de linha e caracteres especiais
+            resposta = resposta.replace('\n', ' ')
             pdf.multi_cell(0, 6, resposta)
             pdf.ln(5)
 
@@ -251,7 +264,7 @@ with gr.Blocks(theme=THEME, css="""
     #subtitle {text-align: center; color: #4b5563; margin-bottom: 20px;}
     .gr-box {border-radius: 10px; padding: 15px;}
 """) as app:
-    
+
     gr.Markdown(
         "# DataInsight Pro 📈🔍",
         elem_id="title"
