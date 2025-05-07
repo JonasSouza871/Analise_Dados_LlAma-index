@@ -1,8 +1,8 @@
 pandas==2.2.2
 gradio==5.4.0
-llama-index-core==0.12.33  # Versão ALINHADA com llama-index
-llama-index==0.12.33       # Exige core >=0.12.33
+llama-index-core==0.12.33  # Versão obrigatória
+llama-index==0.12.33
 llama-index-llms-groq==0.3.1
-llama-index-experimental==0.4.0
+llama-index-experimental==0.5.4  # Única versão compatível com core 0.12.x
 fpdf==1.7.2
 mistralai==0.0.7
