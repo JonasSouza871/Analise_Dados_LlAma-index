@@ -6,3 +6,4 @@ fpdf
 Jinja2
 llama-index>=0.10.0
 llama_index.llms.groq
+llama_index.experimental
