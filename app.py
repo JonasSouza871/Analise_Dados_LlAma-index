@@ -170,7 +170,7 @@ with gr.Blocks(theme=soft, title="Analisador de Dados") as demo:
         with gr.TabItem("📂 Dados"):
             arquivo = gr.File(label="Upload CSV ou Excel", file_count="single", type="filepath")
             status = gr.Markdown()
-            preview = gr.DataFrame(interactive=True, max_rows=15)
+            preview = gr.DataFrame(interactive=True)
             arquivo.change(load_file, [arquivo, estado_df],
                            [status, preview, estado_df, preview])
         # TAB 2 – Perguntas
