@@ -7,18 +7,19 @@ import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
 import os
+import matplotlib
+matplotlib.use('Agg') # Use Agg backend for non-interactive environments
 import matplotlib.pyplot as plt
 import seaborn as sns
 import io
 from PIL import Image
 import base64
 import re
+import traceback
 
-# Configuração inicial
 api_key = os.getenv("secret_key")
 llm = Groq(model="llama3-70b-8192", api_key=api_key)
 
-# Tema personalizado para a interface
 THEME = gr.themes.Soft(
     primary_hue="indigo",
     secondary_hue="gray",
@@ -34,92 +35,106 @@ THEME = gr.themes.Soft(
     button_secondary_text_color="*neutral_800",
 )
 
-# Função para descrição das colunas
 def descricao_colunas(df):
     desc = '\n'.join([f"`{col}`: {str(df[col].dtype)}" for col in df.columns])
     return "Detalhes das colunas do dataframe:\n" + desc
 
-# Função para plotar gráficos (melhorada)
 def plotar_grafico(df, tipo_grafico, x_col=None, y_col=None, hue_col=None, title="Gráfico"):
+    print(f"Gerando gráfico: tipo={tipo_grafico}, x='{x_col}', y='{y_col}', hue='{hue_col}'")
+    print(f"Colunas disponíveis no DataFrame: {df.columns.tolist()}")
+
     try:
-        plt.figure(figsize=(8, 6))
-        sns.set_style("whitegrid")
-
-        # Verificar se as colunas existem
         if x_col and x_col not in df.columns:
-            return None, f"Coluna '{x_col}' não encontrada no DataFrame"
+            plt.close()
+            return None, f"Erro: Coluna X '{x_col}' não encontrada no DataFrame. Colunas disponíveis: {df.columns.tolist()}"
         if y_col and y_col not in df.columns:
-            return None, f"Coluna '{y_col}' não encontrada no DataFrame"
-        if hue_col and hue_col != "None" and hue_col not in df.columns:
-            return None, f"Coluna '{hue_col}' não encontrada no DataFrame"
+            plt.close()
+            return None, f"Erro: Coluna Y '{y_col}' não encontrada no DataFrame. Colunas disponíveis: {df.columns.tolist()}"
+        if hue_col and hue_col is not None and hue_col not in df.columns:
+            plt.close()
+            return None, f"Erro: Coluna Hue '{hue_col}' não encontrada no DataFrame. Colunas disponíveis: {df.columns.tolist()}"
 
-        # Converter hue_col para None se for "None"
-        hue_col = None if hue_col == "None" else hue_col
+        fig = plt.figure(figsize=(8, 6))
+        sns.set_style("whitegrid")
 
         if tipo_grafico == "bar":
             sns.barplot(data=df, x=x_col, y=y_col, hue=hue_col)
         elif tipo_grafico == "scatter":
-            sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, size=hue_col)
+            sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, size=hue_col if hue_col else None)
         elif tipo_grafico == "line":
             sns.lineplot(data=df, x=x_col, y=y_col, hue=hue_col)
         elif tipo_grafico == "box":
             sns.boxplot(data=df, x=x_col, y=y_col, hue=hue_col)
         else:
-            plt.close()
+            plt.close(fig)
             return None, "Tipo de gráfico não suportado. Use 'bar', 'scatter', 'line' ou 'box'."
 
-        plt.title(title, fontsize=14, pad=15)
-        plt.xlabel(x_col, fontsize=12)
-        plt.ylabel(y_col, fontsize=12)
+        plt.title(title if title else f"{tipo_grafico.capitalize()} de {y_col if y_col else 'dados'} por {x_col if x_col else 'dados'}", fontsize=14, pad=15)
+        if x_col: plt.xlabel(x_col, fontsize=12)
+        if y_col: plt.ylabel(y_col, fontsize=12)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
 
-        # Salvar o gráfico em um buffer
         buf = io.BytesIO()
-        plt.savefig(buf, format="png", bbox_inches="tight", dpi=100)
+        plt.savefig(buf, format="png", bbox_inches="tight")
         buf.seek(0)
-        plt.close()
+        plt.close(fig)
 
-        # Converter a imagem para base64
-        image = Image.open(buf)
-        buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        img_str = base64.b64encode(buf.getvalue()).decode("utf-8")
         return f"data:image/png;base64,{img_str}", None
-
     except Exception as e:
-        plt.close()
+        if 'fig' in locals() and fig is not None:
+             plt.close(fig)
+        print(f"Exceção detalhada em plotar_grafico: {e}")
+        traceback.print_exc()
         return None, f"Erro ao gerar gráfico: {str(e)}"
 
-# Configuração do pipeline de consulta
 def pipeline_consulta(df):
     instruction_str = (
-        "1. Converta a consulta para código Python executável usando Pandas.\n"
-        "2. A linha final do código deve ser uma expressão Python que possa ser chamada com `eval()`.\n"
-        "3. O código deve representar uma solução para a consulta.\n"
-        "4. IMPRIMA APENAS A EXPRESSÃO.\n"
-        "5. Não coloque a expressão entre aspas.\n"
-        "6. Se a consulta pedir um gráfico, retorne a expressão para calcular os dados necessários e mencione o tipo de gráfico e as colunas envolvidas no formato EXATO: 'Gráfico: tipo={tipo}, x={x}, y={y}, hue={hue}'. Por exemplo: 'Gráfico: tipo=bar, x=cidade, y=valores, hue=None'. Os tipos de gráficos suportados são: bar, scatter, line, box. Se não houver hue, use hue=None.\n"
+        "INSTRUÇÕES IMPORTANTES:\n"
+        "1. Analise a consulta do usuário.\n"
+        "2. Se a consulta NÃO pedir um gráfico:\n"
+        "   a. Converta a consulta para uma ÚNICA linha de código Python executável usando Pandas (o dataframe é `df`).\n"
+        "   b. A linha final DEVE ser uma expressão Python que possa ser chamada com `eval()`.\n"
+        "   c. IMPRIMA APENAS ESTA EXPRESSÃO. Não adicione comentários Python (#) nem texto explicativo.\n"
+        "   d. Não coloque a expressão entre aspas ou ```python ... ```.\n"
+        "3. Se a consulta PEDIR um gráfico:\n"
+        "   a. NÃO gere código Python para plotar o gráfico (ex: NADA de `df.plot()` ou `sns.plot()`).\n"
+        "   b. Em vez disso, gere uma string no formato EXATO: 'Gráfico: tipo={tipo_grafico}, x={coluna_x}, y={coluna_y}, hue={coluna_hue}'.\n"
+        "      - {tipo_grafico} pode ser 'bar', 'scatter', 'line', 'box'.\n"
+        "      - {coluna_x}, {coluna_y} devem ser nomes de colunas existentes em `df`.\n"
+        "      - {coluna_hue} deve ser um nome de coluna existente em `df` ou a palavra literal 'None' se não aplicável.\n"
+        "   c. Se a consulta pedir um gráfico E também uma manipulação de dados (ex: 'gráfico da média de vendas por região'),\n"
+        "      você DEVE fornecer AMBOS: a string 'Gráfico:...' E, em uma NOVA LINHA, a expressão Python para calcular os dados textuais (ex: `df.groupby('regiao')['vendas'].mean()`).\n"
+        "      A string 'Gráfico:...' deve vir PRIMEIRO.\n"
+        "      Exemplo de saída para 'gráfico de barras da soma de vendas por produto':\n"
+        "      Gráfico: tipo=bar, x=Produto, y=Vendas, hue=None\n"
+        "      df.groupby('Produto')['Vendas'].sum()\n"
+        "   d. Se a consulta pedir APENAS um gráfico de colunas existentes (ex: 'gráfico de dispersão de Preço vs Quantidade'):\n"
+        "      Forneça APENAS a string 'Gráfico: tipo=scatter, x=Preço, y=Quantidade, hue=None'. Nenhuma expressão Python adicional é necessária.\n"
+        "5. Certifique-se que os nomes das colunas na string 'Gráfico:' correspondem EXATAMENTE aos nomes das colunas no dataframe `df`."
     )
 
     pandas_prompt_str = (
         "Você está trabalhando com um dataframe do pandas chamado `df`.\n"
-        "{colunas_detalhes}\n\n"
+        "Detalhes das colunas (nome: tipo):\n{colunas_detalhes}\n\n"
         "Resultado de `print(df.head())`:\n"
         "{df_str}\n\n"
-        "Siga estas instruções:\n"
-        "{instruction_str}\n"
-        "Consulta: {query_str}\n\n"
-        "Expressão:"
+        "Siga estas instruções DETALHADAMENTE:\n{instruction_str}\n\n"
+        "Consulta do Usuário: {query_str}\n\n"
+        "Sua Resposta (string 'Gráfico:...' e/ou expressão Python):"
     )
 
     response_synthesis_prompt_str = (
         "Dada uma pergunta de entrada, atue como analista de dados e elabore uma resposta a partir dos resultados da consulta.\n"
-        "Responda de forma natural, sem introduções como 'A resposta é:' ou algo semelhante.\n"
-        "Consulta: {query_str}\n\n"
-        "Instruções do Pandas (opcional):\n{pandas_instructions}\n\n"
-        "Saída do Pandas: {pandas_output}\n\n"
-        "Resposta: \n\n"
-        "Se a consulta pedir um gráfico, inclua na resposta as informações do gráfico (tipo, colunas usadas) no formato EXATO: 'Gráfico: tipo={tipo}, x={x}, y={y}, hue={hue}'.\n"
-        "Ao final, exibir o código usado para gerar a resposta, no formato: O código utilizado foi `{pandas_instructions}`"
+        "Responda de forma natural e concisa, sem introduções como 'A resposta é:' ou algo semelhante.\n"
+        "Consulta Original: {query_str}\n\n"
+        "Instruções/Código Gerado para Pandas (pode conter 'Gráfico:...' e/ou uma expressão Python):\n{pandas_instructions}\n\n"
+        "Resultado da Execução da Expressão Python (se houver, caso contrário será 'None' ou um erro):\n{pandas_output}\n\n"
+        "Sua Resposta Final para o Usuário:\n"
+        "Se `pandas_instructions` continha 'Gráfico: ...', REPITA EXATAMENTE essa string 'Gráfico: ...' na sua resposta final para o usuário. NÃO a modifique.\n"
+        "Se `pandas_output` for um objeto (como um Axes de Matplotlib), NÃO o inclua diretamente. Descreva o resultado textual com base em `pandas_output`.\n"
+        "Ao final, se uma expressão Python foi usada (vista em `pandas_instructions` e não começando com 'Gráfico:'), exiba o código usado para gerar a parte textual da resposta, no formato: 'O código utilizado para a análise textual foi: `{codigo_python}`'. Se `pandas_instructions` continha apenas 'Gráfico:...' ou não continha código Python para `eval`, não inclua esta frase sobre o código."
     )
 
     pandas_prompt = PromptTemplate(pandas_prompt_str).partial_format(
@@ -150,113 +165,138 @@ def pipeline_consulta(df):
     qp.add_link("response_synthesis_prompt", "llm2")
     return qp
 
-# Função para carregar dados
 def carregar_dados(caminho_arquivo, df_estado):
     if not caminho_arquivo:
         return "Por favor, faça o upload de um arquivo CSV ou Excel.", pd.DataFrame(), df_estado
 
     try:
-        ext = os.path.splitext(caminho_arquivo)[1].lower()
+        ext = os.path.splitext(caminho_arquivo.name)[1].lower()
         if ext == '.csv':
-            df = pd.read_csv(caminho_arquivo)
+            df = pd.read_csv(caminho_arquivo.name)
         elif ext in ['.xlsx', '.xls']:
-            df = pd.read_excel(caminho_arquivo)
+            df = pd.read_excel(caminho_arquivo.name)
         elif ext == '.xlsb':
-            df = pd.read_excel(caminho_arquivo, engine='pyxlsb')
+            df = pd.read_excel(caminho_arquivo.name, engine='pyxlsb')
         else:
             return "Formato de arquivo não suportado. Use CSV, Excel (.xlsx, .xls) ou Excel Binário (.xlsb).", pd.DataFrame(), df_estado
         return "Arquivo carregado com sucesso!", df.head(), df
     except Exception as e:
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado
 
-# Função para processar pergunta (melhorada)
 def processar_pergunta(pergunta, df_estado):
-    if df_estado is not None and pergunta:
+    if df_estado is not None and not df_estado.empty and pergunta:
         try:
             qp = pipeline_consulta(df_estado)
-            resposta = qp.run(query_str=pergunta)
+            raw_response_obj = qp.run(query_str=pergunta)
 
-            if isinstance(resposta, str):
-                resposta_texto = resposta
+            print(f"Tipo de objeto de resposta do pipeline: {type(raw_response_obj)}")
+            print(f"Objeto de resposta completo: {raw_response_obj}")
+
+            if hasattr(raw_response_obj, 'response'):
+                resposta_texto = str(raw_response_obj.response)
+            elif hasattr(raw_response_obj, 'message') and hasattr(raw_response_obj.message, 'content'):
+                resposta_texto = str(raw_response_obj.message.content)
+            elif isinstance(raw_response_obj, str):
+                resposta_texto = raw_response_obj
             else:
-                resposta_texto = resposta.message.content
+                resposta_texto = str(raw_response_obj)
 
-            # Verificar se há menção a gráfico na resposta
-            if "Gráfico:" in resposta_texto:
-                grafico_info = re.search(r"Gráfico: tipo=(\w+), x=(\w+), y=(\w+), hue=(\w+)", resposta_texto)
-                if grafico_info:
-                    tipo, x_col, y_col, hue_col = grafico_info.groups()
-                    hue_col = None if hue_col == "None" else hue_col
+            print(f"Resposta textual extraída para processamento: {resposta_texto}")
 
-                    # Verificar se as colunas existem no DataFrame
-                    if x_col not in df_estado.columns:
-                        return f"Erro: Coluna '{x_col}' não encontrada no DataFrame", None
-                    if y_col not in df_estado.columns:
-                        return f"Erro: Coluna '{y_col}' não encontrada no DataFrame", None
-                    if hue_col and hue_col not in df_estado.columns:
-                        return f"Erro: Coluna '{hue_col}' não encontrada no DataFrame", None
+            img_data = None
 
-                    img_data, erro = plotar_grafico(df_estado, tipo, x_col, y_col, hue_col, title=pergunta)
-                    if erro:
-                        return f"Erro ao gerar gráfico: {erro}", None
-                    return resposta_texto, img_data
+            grafico_info_match = re.search(
+                r"Gráfico:\s*tipo=([\w-]+),\s*x=([^,]+),\s*y=([^,]+),\s*hue=([^,\n]+)",
+                resposta_texto,
+                re.IGNORECASE
+            )
 
-            return resposta_texto, None
+            if grafico_info_match:
+                print("Padrão 'Gráfico:' encontrado na resposta_texto.")
+                tipo, x_col, y_col, hue_col = [g.strip() for g in grafico_info_match.groups()]
+
+                print(f"Informações do gráfico extraídas: tipo={tipo}, x='{x_col}', y='{y_col}', hue='{hue_col}'")
+
+                if hue_col.lower() == "none":
+                    hue_col = None
+
+                img_data, erro_grafico = plotar_grafico(df_estado, tipo, x_col, y_col, hue_col, title=f"Gráfico: {pergunta}")
+                if erro_grafico:
+                    resposta_texto += f"\n\nAVISO DE GRÁFICO: {erro_grafico}"
+                    img_data = None
+                    print(f"Erro ao gerar gráfico: {erro_grafico}")
+                else:
+                    print("Gráfico gerado com sucesso (dados base64).")
+            else:
+                print("Padrão 'Gráfico:' NÃO encontrado na resposta_texto.")
+
+            return resposta_texto, img_data
         except Exception as e:
+            print(f"Erro detalhado no processar_pergunta: {e}")
+            traceback.print_exc()
             return f"Erro no pipeline: {str(e)}", None
-    return "Por favor, carregue um arquivo e faça uma pergunta.", None
+    elif df_estado is None or df_estado.empty:
+         return "Por favor, carregue um arquivo CSV ou Excel primeiro.", None
+    return "Por favor, faça uma pergunta.", None
 
-# Função para adicionar ao histórico
 def add_historico(pergunta, resposta_texto, historico_estado):
     if pergunta and resposta_texto:
-        historico_estado.append((pergunta, resposta_texto))
-        return historico_estado, gr.Info("Adicionado ao histórico do PDF!")
-    return historico_estado, gr.Info("Nenhuma pergunta/resposta para adicionar.")
+        if not historico_estado or historico_estado[-1] != (pergunta, resposta_texto):
+            historico_estado.append((pergunta, resposta_texto))
+            return historico_estado, gr.Info("Adicionado ao histórico do PDF!")
+        else:
+            return historico_estado, gr.Info("Já está no histórico.")
+    return historico_estado, gr.Warning("Nenhuma pergunta/resposta para adicionar.")
 
-# Função para gerar PDF (melhorada)
 def gerar_pdf(historico_estado):
     if not historico_estado:
-        return None, "Nenhum dado para gerar o PDF."
+        return None, gr.Warning("Nenhum dado para gerar o PDF.")
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     caminho_pdf = f"relatorio_analise_{timestamp}.pdf"
 
     pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
+    font_path = os.path.join(os.path.dirname(__file__), "DejaVuSansCondensed.ttf")
+    font_bold_path = os.path.join(os.path.dirname(__file__), "DejaVuSansCondensed-Bold.ttf")
 
     try:
-        # Adicionar suporte a UTF-8
-        pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
-        pdf.set_font('DejaVu', '', 12)
+        if not os.path.exists(font_path):
+             raise RuntimeError(f"Arquivo de fonte não encontrado: {font_path}")
+        if not os.path.exists(font_bold_path):
+             raise RuntimeError(f"Arquivo de fonte não encontrado: {font_bold_path}")
+        pdf.add_font("DejaVu", "", font_path, uni=True)
+        pdf.add_font("DejaVu", "B", font_bold_path, uni=True)
+    except RuntimeError as e:
+        print(f"Erro ao adicionar fontes: {e}. Verifique se os arquivos .ttf (DejaVuSansCondensed.ttf, DejaVuSansCondensed-Bold.ttf) estão no diretório do script.")
+        return None, gr.Error(f"Erro de fonte PDF: {e}. Certifique-se de que os arquivos .ttf estão no mesmo diretório do script.")
 
+    pdf.add_page()
+    pdf.set_font("DejaVu", 'B', 16)
+
+    try:
         pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align='C')
         pdf.ln(10)
 
         for i, (pergunta, resposta) in enumerate(historico_estado, 1):
-            pdf.set_font('DejaVu', 'B', 12)
-            pdf.cell(0, 8, f"Pergunta {i}: {pergunta}", ln=True)
-            pdf.set_font('DejaVu', '', 11)
-
-            # Tratar quebras de linha e caracteres especiais
-            resposta = resposta.replace('\n', ' ')
+            pdf.set_font("DejaVu", 'B', 12)
+            pdf.multi_cell(0, 8, f"Pergunta {i}: {pergunta}", ln=True)
+            pdf.set_font("DejaVu", '', 11)
             pdf.multi_cell(0, 6, resposta)
             pdf.ln(5)
 
         pdf.output(caminho_pdf)
-        return caminho_pdf, "PDF gerado com sucesso!"
+        return caminho_pdf, gr.Info("PDF gerado com sucesso!")
     except Exception as e:
-        return None, f"Erro ao gerar PDF: {str(e)}"
+        print(f"Erro detalhado ao gerar PDF: {str(e)}")
+        traceback.print_exc()
+        return None, gr.Error(f"Erro ao gerar PDF: {str(e)}")
 
-# Função para limpar
 def limpar_pergunta_resposta():
     return "", "", None
 
-# Função para resetar
 def resetar_aplicacao():
     return None, "Aplicação resetada. Faça upload de um novo arquivo.", pd.DataFrame(), "", None, [], "", None
 
-# Interface Gradio
 with gr.Blocks(theme=THEME, css="""
     .gr-button {margin: 5px;}
     .gr-textbox {border-radius: 5px;}
@@ -274,12 +314,14 @@ with gr.Blocks(theme=THEME, css="""
         elem_id="subtitle"
     )
 
+    df_estado = gr.State(value=pd.DataFrame())
+    historico_estado = gr.State(value=[])
+
     with gr.Tabs():
         with gr.Tab("Carregar Dados"):
             with gr.Row():
                 with gr.Column(scale=1):
                     input_arquivo = gr.File(
-                        file_types=[".csv", ".xlsx", ".xls", ".xlsb"],
                         label="Upload de Arquivo (CSV, Excel ou Excel Binário)"
                     )
                     upload_status = gr.Textbox(label="Status do Upload", interactive=False)
@@ -305,19 +347,16 @@ with gr.Blocks(theme=THEME, css="""
                 with gr.Column(scale=2):
                     gr.Markdown("### Resposta")
                     output_resposta = gr.Textbox(label="Resposta", lines=5, interactive=False)
-                    output_grafico = gr.Image(label="Gráfico", type="filepath")
+                    output_grafico = gr.Image(label="Gráfico")
 
             with gr.Row():
                 botao_limpeza = gr.Button("Limpar", variant="secondary")
                 botao_add_pdf = gr.Button("Adicionar ao Histórico", variant="secondary")
                 botao_gerar_pdf = gr.Button("Gerar PDF", variant="primary")
 
-            arquivo_pdf = gr.File(label="Download do PDF")
+            arquivo_pdf = gr.File(label="Download do PDF", interactive=False)
 
     botao_resetar = gr.Button("Novo Conjunto de Dados", variant="secondary")
-
-    df_estado = gr.State(value=None)
-    historico_estado = gr.State(value=[])
 
     input_arquivo.change(
         fn=carregar_dados,
@@ -337,12 +376,12 @@ with gr.Blocks(theme=THEME, css="""
     botao_add_pdf.click(
         fn=add_historico,
         inputs=[input_pergunta, output_resposta, historico_estado],
-        outputs=[historico_estado]
+        outputs=[historico_estado, upload_status]
     )
     botao_gerar_pdf.click(
         fn=gerar_pdf,
         inputs=[historico_estado],
-        outputs=[arquivo_pdf]
+        outputs=[arquivo_pdf, upload_status]
     )
     botao_resetar.click(
         fn=resetar_aplicacao,
@@ -351,4 +390,6 @@ with gr.Blocks(theme=THEME, css="""
     )
 
 if __name__ == "__main__":
+    # Certifique-se de ter os arquivos DejaVuSansCondensed.ttf e DejaVuSansCondensed-Bold.ttf
+    # no mesmo diretório que este script, ou ajuste os caminhos em gerar_pdf.
     app.launch()
