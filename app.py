@@ -1,6 +1,6 @@
 # ========================== DEPENDÊNCIAS ==========================
 # Execute no Colab:
-# !pip install llama-index llama-index-llms-groq gradio pandas openpyxl fpdf matplotlib
+# !pip install llama-index llama-index-llms-groq gradio pandas openpyxl fpdf matplotlib seaborn
 
 from llama_index.llms.groq import Groq
 from llama_index.core import PromptTemplate
@@ -9,11 +9,13 @@ from llama_index.core.query_pipeline import QueryPipeline as QP, Link, InputComp
 import gradio as gr
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 from fpdf import FPDF
 import tempfile, os
 from datetime import datetime
 import base64
 import io
+import re
 
 # ========================== LLM (Groq) ============================
 os.environ["secret_key"] = os.getenv("secret_key", "")
@@ -23,19 +25,59 @@ llm = Groq(model="llama3-70b-8192", api_key=os.environ["secret_key"])
 def descricao_colunas(df):
     return "Detalhes das colunas do dataframe:\n" + "\n".join(f"`{c}`: {t}" for c, t in zip(df.columns, df.dtypes))
 
+def plotar_grafico(df, tipo, x_col=None, y_col=None, hue_col=None):
+    """Função para plotar gráficos com base nos parâmetros"""
+    plt.figure(figsize=(8, 6))
+
+    if tipo == "bar":
+        if hue_col:
+            sns.barplot(data=df, x=x_col, y=y_col, hue=hue_col)
+        else:
+            sns.barplot(data=df, x=x_col, y=y_col)
+    elif tipo == "line":
+        if hue_col:
+            sns.lineplot(data=df, x=x_col, y=y_col, hue=hue_col)
+        else:
+            sns.lineplot(data=df, x=x_col, y=y_col)
+    elif tipo == "scatter":
+        if hue_col:
+            sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col)
+        else:
+            sns.scatterplot(data=df, x=x_col, y=y_col)
+    elif tipo == "hist":
+        sns.histplot(data=df, x=y_col)
+    else:
+        sns.scatterplot(data=df, x=x_col, y=y_col)
+
+    plt.title(f"{tipo} de {y_col} por {x_col}")
+    plt.tight_layout()
+
+    # Salvar gráfico em buffer
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+
+    # Converter para base64 para exibição no Gradio
+    img_str = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{img_str}"
+
 def pipeline_consulta(df):
     instruction_str = (
-        "1. Converta a consulta para código Python executável usando Pandas.\n"
-        "2. A linha final do código deve ser uma expressão Python que possa ser chamada com `eval()`.\n"
-        "3. O código deve representar uma solução para a consulta.\n"
-        "4. IMPRIMA APENAS A EXPRESSÃO.\n"
-        "5. Não coloque a expressão entre aspas.\n"
-        "6. Se a consulta pedir um gráfico, inclua a linha 'Gráfico: tipo={tipo}, x={coluna_x}, y={coluna_y}' antes do código\n"
+        "1. Analise a consulta do usuário.\n"
+        "2. Se a consulta NÃO pedir um gráfico:\n"
+        "   a. Converta a consulta para uma ÚNICA linha de código Python executável usando Pandas.\n"
+        "   b. A linha final DEVE ser uma expressão Python que possa ser chamada com `eval()`.\n"
+        "   c. IMPRIMA APENAS ESTA EXPRESSÃO. Não adicione comentários Python (#) nem texto explicativo.\n"
+        "3. Se a consulta PEDIR um gráfico:\n"
+        "   a. Inclua a linha 'Gráfico: tipo={tipo}, x={coluna_x}, y={coluna_y}' antes do código\n"
+        "   b. O código deve gerar os dados necessários para o gráfico\n"
+        "4. Certifique-se que os nomes das colunas correspondem EXATAMENTE aos do dataframe.\n"
     )
 
     pandas_prompt = PromptTemplate(
         "Você está trabalhando com um dataframe do pandas chamado `df`.\n"
-        "{colunas}\n\nprint(df.head()):\n{head}\n\n{instr}\nConsulta: {query}\n\nExpressão:"
+        "{colunas}\n\nprint(df.head()):\n{head}\n\n{instr}\nConsulta: {query}\n\nResposta:"
     ).partial_format(
         colunas=descricao_colunas(df),
         head=df.head(5),
@@ -79,79 +121,33 @@ def carregar_dados(fp, df_state):
     except Exception as e:
         return f"Erro: {e}", pd.DataFrame(), df_state
 
-def plotar_grafico(df, tipo, x_col, y_col):
-    """Função para plotar gráficos com base nos parâmetros"""
-    plt.figure(figsize=(8, 6))
-
-    if tipo == "bar":
-        df.plot.bar(x=x_col, y=y_col)
-    elif tipo == "line":
-        df.plot.line(x=x_col, y=y_col)
-    elif tipo == "scatter":
-        df.plot.scatter(x=x_col, y=y_col)
-    elif tipo == "hist":
-        df[y_col].plot.hist()
-    else:
-        df.plot(x=x_col, y=y_col)
-
-    plt.title(f"{tipo} de {y_col} por {x_col}")
-    plt.tight_layout()
-
-    # Salvar gráfico em buffer
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
-    plt.close()
-
-    # Converter para base64 para exibição no Gradio
-    img_str = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/png;base64,{img_str}"
-
 def processar_pergunta(q, df_state):
     if df_state is None or q.strip() == "":
         return "Carregue um arquivo e faça uma pergunta.", None, None
 
     try:
-        # Verificar se a pergunta contém solicitação de gráfico
-        gerar_grafico = any(x in q.lower() for x in ["gráfico", "grafico", "plot", "plotar"])
-
         # Executar o pipeline
         ans = pipeline_consulta(df_state).run(query=q)
         resposta = ans.message.content
 
         img_data = None
 
-        if gerar_grafico:
-            # Extrair parâmetros do gráfico da resposta
-            if "Gráfico: tipo=" in resposta:
-                # Extrair parâmetros do gráfico
-                grafico_line = [line for line in resposta.split('\n') if line.startswith("Gráfico:")][0]
-                params = grafico_line.replace("Gráfico: ", "").split(',')
+        # Verificar se a resposta contém solicitação de gráfico
+        grafico_match = re.search(r"Gráfico:\s*tipo=([\w]+),\s*x=([\w]+),\s*y=([\w]+)", resposta)
+        if grafico_match:
+            tipo = grafico_match.group(1)
+            x_col = grafico_match.group(2)
+            y_col = grafico_match.group(3)
 
-                tipo = params[0].split('=')[1].strip()
-                x_col = params[1].split('=')[1].strip()
-                y_col = params[2].split('=')[1].strip()
+            # Extrair o código Python da resposta
+            codigo_match = re.search(r"`([^`]+)`", resposta)
+            if codigo_match:
+                codigo = codigo_match.group(1)
+                # Executar o código para obter os dados
+                dados = eval(codigo, {"df": df_state, "pd": pd})
 
-                # Plotar gráfico
-                img_data = plotar_grafico(df_state, tipo, x_col, y_col)
-            else:
-                # Tentar plotar gráfico padrão se não houver parâmetros específicos
-                try:
-                    # Tentar extrair código Python da resposta
-                    codigo = resposta.split("`")[-2] if "`" in resposta else resposta
-                    resultado = eval(codigo, {"df": df_state, "plt": plt})
-
-                    # Se o resultado for um plot, salvar a imagem
-                    if hasattr(resultado, 'plot'):
-                        resultado.plot()
-                        buf = io.BytesIO()
-                        plt.savefig(buf, format="png")
-                        buf.seek(0)
-                        img_data = base64.b64encode(buf.getvalue()).decode("utf-8")
-                        img_data = f"data:image/png;base64,{img_data}"
-                        plt.close()
-                except Exception as e:
-                    print(f"Erro ao plotar gráfico: {e}")
+                # Plotar o gráfico
+                img_data = plotar_grafico(dados, tipo, x_col, y_col)
 
         return resposta, img_data, img_data
     except Exception as e:
