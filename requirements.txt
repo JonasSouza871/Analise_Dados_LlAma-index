@@ -1,9 +1,12 @@
 pandas==2.2.2
 gradio==5.4.0
-llama-index-core==0.12.33
-llama-index==0.12.33
-llama-index-llms-groq==0.3.1
-llama-index-experimental==0.5.4
+llama-index-core>=0.12.33  # Versão flexível
+llama-index>=0.12.33
+llama-index-llms-groq>=0.3.1
+llama-index-experimental>=0.5.4  # Remove fixação rígida
 fpdf==1.7.2
 mistralai==0.0.7
-Jinja2>=3.1.2  # Linha adicionada
+Jinja2>=3.1.2
+azure-identity>=1.21.0
+msal>=1.32.0
+duckdb>=1.0.0
