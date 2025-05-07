@@ -1,9 +1,25 @@
+# Dependências principais
 pandas
+numpy
+matplotlib
+seaborn
 gradio
-llama-index
+
+# LlamaIndex e componentes
+
 llama-index-core
+llama-index-llms-groq
+llama-index-experimental
+
+# API de LLM
+groq
+
+# Manipulação de arquivos
+openpyxl  # Para suporte a arquivos Excel
 fpdf
 Jinja2
+
+# Visualização
+plotly
+
 llama-index>=0.10.0
-llama_index.llms.groq
-llama_index.experimental
