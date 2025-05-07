@@ -12,6 +12,7 @@ import seaborn as sns
 import io
 from PIL import Image
 import base64
+import re
 
 # Configuração inicial
 api_key = os.getenv("secret_key")
@@ -40,37 +41,42 @@ def descricao_colunas(df):
 
 # Função para plotar gráficos
 def plotar_grafico(df, tipo_grafico, x_col=None, y_col=None, hue_col=None, title="Gráfico"):
-    plt.figure(figsize=(8, 6))
-    sns.set_style("whitegrid")
-    
-    if tipo_grafico == "bar":
-        sns.barplot(data=df, x=x_col, y=y_col, hue=hue_col)
-    elif tipo_grafico == "scatter":
-        sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, size=hue_col)
-    elif tipo_grafico == "line":
-        sns.lineplot(data=df, x=x_col, y=y_col, hue=hue_col)
-    elif tipo_grafico == "box":
-        sns.boxplot(data=df, x=x_col, y=y_col, hue=hue_col)
-    else:
-        plt.close()
-        return None, "Tipo de gráfico não suportado. Use 'bar', 'scatter', 'line' ou 'box'."
+    print(f"Gerando gráfico: tipo={tipo_grafico}, x={x_col}, y={y_col}, hue={hue_col}")  # Depuração
+    try:
+        plt.figure(figsize=(8, 6))
+        sns.set_style("whitegrid")
+        
+        if tipo_grafico == "bar":
+            sns.barplot(data=df, x=x_col, y=y_col, hue=hue_col)
+        elif tipo_grafico == "scatter":
+            sns.scatterplot(data=df, x=x_col, y=y_col, hue=hue_col, size=hue_col)
+        elif tipo_grafico == "line":
+            sns.lineplot(data=df, x=x_col, y=y_col, hue=hue_col)
+        elif tipo_grafico == "box":
+            sns.boxplot(data=df, x=x_col, y=y_col, hue=hue_col)
+        else:
+            plt.close()
+            return None, "Tipo de gráfico não suportado. Use 'bar', 'scatter', 'line' ou 'box'."
 
-    plt.title(title, fontsize=14, pad=15)
-    plt.xlabel(x_col, fontsize=12)
-    plt.ylabel(y_col, fontsize=12)
-    
-    # Salvar o gráfico em um buffer
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    buf.seek(0)
-    image = Image.open(buf)
-    plt.close()
-    
-    # Converter a imagem para base64 para exibir no Gradio
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    return f"data:image/png;base64,{img_str}", None
+        plt.title(title, fontsize=14, pad=15)
+        plt.xlabel(x_col, fontsize=12)
+        plt.ylabel(y_col, fontsize=12)
+        
+        # Salvar o gráfico em um buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight")
+        buf.seek(0)
+        image = Image.open(buf)
+        plt.close()
+        
+        # Converter a imagem para base64 para exibir no Gradio
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        return f"data:image/png;base64,{img_str}", None
+    except Exception as e:
+        plt.close()
+        return None, f"Erro ao gerar gráfico: {str(e)}"
 
 # Configuração do pipeline de consulta
 def pipeline_consulta(df):
@@ -80,7 +86,7 @@ def pipeline_consulta(df):
         "3. O código deve representar uma solução para a consulta.\n"
         "4. IMPRIMA APENAS A EXPRESSÃO.\n"
         "5. Não coloque a expressão entre aspas.\n"
-        "6. Se a consulta pedir um gráfico, retorne a expressão para calcular os dados necessários e mencione o tipo de gráfico (ex.: 'bar', 'scatter', 'line', 'box') e as colunas envolvidas (ex.: x='col1', y='col2', hue='col3').\n"
+        "6. Se a consulta pedir um gráfico, retorne a expressão para calcular os dados necessários e mencione o tipo de gráfico e as colunas envolvidas no formato EXATO: 'Gráfico: tipo={tipo}, x={x}, y={y}, hue={hue}'. Por exemplo: 'Gráfico: tipo=bar, x=cidade, y=valores, hue=None'. Os tipos de gráficos suportados são: bar, scatter, line, box. Se não houver hue, use hue=None.\n"
     )
 
     pandas_prompt_str = (
@@ -101,7 +107,7 @@ def pipeline_consulta(df):
         "Instruções do Pandas (opcional):\n{pandas_instructions}\n\n"
         "Saída do Pandas: {pandas_output}\n\n"
         "Resposta: \n\n"
-        "Se a consulta pedir um gráfico, inclua na resposta as informações do gráfico (tipo, colunas usadas) no formato: 'Gráfico: tipo={tipo}, x={x}, y={y}, hue={hue}'.\n"
+        "Se a consulta pedir um gráfico, inclua na resposta as informações do gráfico (tipo, colunas usadas) no formato EXATO: 'Gráfico: tipo={tipo}, x={x}, y={y}, hue={hue}'. Por exemplo: 'Gráfico: tipo=bar, x=cidade, y=valores, hue=None'.\n"
         "Ao final, exibir o código usado para gerar a resposta, no formato: O código utilizado foi `{pandas_instructions}`"
     )
 
@@ -152,7 +158,7 @@ def carregar_dados(caminho_arquivo, df_estado):
     except Exception as e:
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado
 
-# Função para processar pergunta (ajustada)
+# Função para processar pergunta
 def processar_pergunta(pergunta, df_estado):
     if df_estado is not None and pergunta:
         try:
@@ -165,17 +171,18 @@ def processar_pergunta(pergunta, df_estado):
             
             # Ajustar para lidar com o retorno do qp.run
             if isinstance(resposta, str):
-                resposta_texto = resposta  # Se for string, usar diretamente
+                resposta_texto = resposta
             else:
-                resposta_texto = resposta.message.content  # Caso contrário, usar a estrutura antiga
+                resposta_texto = resposta.message.content
             
             # Verificar se a resposta menciona um gráfico
             if "Gráfico:" in resposta_texto:
+                print("Gráfico detectado na resposta")  # Depuração
                 # Extrair informações do gráfico
-                import re
                 grafico_info = re.search(r"Gráfico: tipo=(\w+), x=(\w+), y=(\w+), hue=(\w+)", resposta_texto)
                 if grafico_info:
                     tipo, x_col, y_col, hue_col = grafico_info.groups()
+                    print(f"Informações do gráfico extraídas: tipo={tipo}, x={x_col}, y={y_col}, hue={hue_col}")  # Depuração
                     # Se hue for "None", ajustamos para None
                     hue_col = None if hue_col == "None" else hue_col
                     # Gerar o gráfico
@@ -183,19 +190,21 @@ def processar_pergunta(pergunta, df_estado):
                     if erro:
                         return f"Erro ao gerar gráfico: {erro}", None
                     return resposta_texto, img_data
+                else:
+                    print("Informações do gráfico não encontradas na resposta")  # Depuração
             return resposta_texto, None
         except Exception as e:
             return f"Erro no pipeline: {str(e)}", None
     return "Por favor, carregue um arquivo e faça uma pergunta.", None
 
-# Função para adicionar ao histórico
-def add_historico(pergunta, resposta, historico_estado):
-    if pergunta and resposta:
-        historico_estado.append((pergunta, resposta))
+# Função para adicionar ao histórico (ajustada)
+def add_historico(pergunta, resposta_texto, historico_estado):
+    if pergunta and resposta_texto:
+        historico_estado.append((pergunta, resposta_texto))  # Adiciona apenas a parte textual
         return historico_estado, gr.Info("Adicionado ao histórico do PDF!")
     return historico_estado, gr.Info("Nenhuma pergunta/resposta para adicionar.")
 
-# Função para gerar PDF
+# Função para gerar PDF (ajustada para tratar caracteres especiais)
 def gerar_pdf(historico_estado):
     if not historico_estado:
         return None, "Nenhum dado para gerar o PDF."
@@ -206,18 +215,25 @@ def gerar_pdf(historico_estado):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align='C')
-    pdf.ln(10)
     
-    for i, (pergunta, resposta) in enumerate(historico_estado, 1):
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 8, f"Pergunta {i}: {pergunta}", ln=True)
-        pdf.set_font("Arial", '', 11)
-        pdf.multi_cell(0, 6, resposta)
-        pdf.ln(5)
+    try:
+        pdf.cell(0, 10, "Relatório de Análise de Dados", ln=True, align='C')
+        pdf.ln(10)
+        
+        for i, (pergunta, resposta) in enumerate(historico_estado, 1):
+            pdf.set_font("Arial", 'B', 12)
+            # Tratar caracteres especiais
+            pergunta = pergunta.encode('latin-1', 'replace').decode('latin-1')
+            pdf.cell(0, 8, f"Pergunta {i}: {pergunta}", ln=True)
+            pdf.set_font("Arial", '', 11)
+            resposta = resposta.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(0, 6, resposta)
+            pdf.ln(5)
 
-    pdf.output(caminho_pdf)
-    return caminho_pdf, "PDF gerado com sucesso!"
+        pdf.output(caminho_pdf)
+        return caminho_pdf, "PDF gerado com sucesso!"
+    except Exception as e:
+        return None, f"Erro ao gerar PDF: {str(e)}"
 
 # Função para limpar
 def limpar_pergunta_resposta():
