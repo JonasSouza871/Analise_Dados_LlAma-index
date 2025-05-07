@@ -22,4 +22,5 @@ Jinja2
 # Visualização
 plotly
 
+pyxlsb 
 llama-index>=0.10.0
