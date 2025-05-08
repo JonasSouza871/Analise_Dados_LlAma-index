@@ -8,13 +8,10 @@ from fpdf import FPDF
 from datetime import datetime
 import os
 
-# API KEY do GROQ
 api_key = os.getenv("secret_key")
 
-# Configuração inicial do QP
 llm = Groq(model="llama3-70b-8192", api_key=api_key)
 
-# Pipeline de consulta
 def descrição_colunas(df):
     descrição = '\n'.join([f"`{col}`: {str(df[col].dtype)}" for col in df.columns])
     return "Aqui estão os detalhes das colunas do dataframe:\n" + descrição
@@ -36,7 +33,7 @@ def pipeline_consulta(df):
         "{instruction_str}\n"
         "Consulta: {query_str}\n\n"
         "Expressão:"
-    )
+)
 
     response_synthesis_prompt_str = (
        "Dada uma pergunta de entrada, atue como analista de dados e elabore uma resposta a partir dos resultados da consulta.\n"
@@ -49,10 +46,10 @@ def pipeline_consulta(df):
     )
 
     pandas_prompt = PromptTemplate(pandas_prompt_str).partial_format(
-        instruction_str=instruction_str,
-        df_str=df.head(5),
-        colunas_detalhes=descrição_colunas(df)
-    )
+    instruction_str=instruction_str,
+    df_str=df.head(5),
+    colunas_detalhes=descrição_colunas(df)
+)
 
     pandas_output_parser = PandasInstructionParser(df)
     response_synthesis_prompt = PromptTemplate(response_synthesis_prompt_str)
@@ -81,12 +78,13 @@ def pipeline_consulta(df):
 
 def carregar_dados(caminho_arquivo, df_estado):
     if caminho_arquivo is None or caminho_arquivo == "":
-        return "Por favor, faça o upload de um arquivo CSV para analisar.", pd.DataFrame(), df_estado
+        return "Por favor, faça o upload de um arquivo CSV para analisar.", pd.DataFrame(), df_estado, ""
     try:
         df = pd.read_csv(caminho_arquivo)
-        return "Arquivo carregado com sucesso!", df.head(), df
+        colunas_str = '\n'.join(df.columns)
+        return "Arquivo carregado com sucesso!", df.head(), df, colunas_str
     except Exception as e:
-        return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado
+        return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, ""
 
 def processar_pergunta(pergunta, df_estado):
     if df_estado is not None and pergunta:
@@ -100,6 +98,7 @@ def add_historico(pergunta, resposta, historico_estado):
         historico_estado.append((pergunta, resposta))
         gr.Info("Adicionado ao PDF!", duration=2)
         return historico_estado
+    return historico_estado
 
 def gerar_pdf(historico_estado):
     if not historico_estado:
@@ -111,13 +110,17 @@ def gerar_pdf(historico_estado):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_font('Arial', '', 12)
 
     for pergunta, resposta in historico_estado:
+        pergunta_encoded = pergunta.encode('latin-1', 'replace').decode('latin-1')
+        resposta_encoded = resposta.encode('latin-1', 'replace').decode('latin-1')
+
         pdf.set_font("Arial", 'B', 14)
-        pdf.multi_cell(0, 8, txt=pergunta)
+        pdf.multi_cell(0, 8, txt=pergunta_encoded)
         pdf.ln(2)
         pdf.set_font("Arial", '', 12)
-        pdf.multi_cell(0, 8, txt=resposta)
+        pdf.multi_cell(0, 8, txt=resposta_encoded)
         pdf.ln(6)
 
     pdf.output(caminho_pdf)
@@ -127,9 +130,10 @@ def limpar_pergunta_resposta():
     return "", ""
 
 def resetar_aplicação():
-    return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV.", pd.DataFrame(), "", None, [], ""
+    return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV.", pd.DataFrame(), "", None, [], "", ""
 
 with gr.Blocks(theme='Soft') as app:
+
     gr.Markdown("# Analisando os dados🔎🎲")
 
     gr.Markdown('''
@@ -142,26 +146,24 @@ with gr.Blocks(theme='Soft') as app:
     ''')
 
     input_arquivo = gr.File(file_count="single", type="filepath", label="Upload CSV")
+
     upload_status = gr.Textbox(label="Status do Upload:")
+
     tabela_dados = gr.DataFrame()
 
-    # Novo bloco de exemplos clicáveis (MUDANÇA PRINCIPAL AQUI)
-    gr.Markdown("### Exemplos de perguntas:")
-    gr.Examples(
-        examples=[
-            "Quantas linhas existem no dataset?",
-            "Quais são os tipos de dados de cada coluna?",
-            "Mostre as 5 primeiras entradas",
-            "Existem valores nulos no dataset?",
-            "Quais são os valores únicos na coluna X?"
-        ],
-        inputs=input_pergunta,
-        label="Clique em um exemplo para preencher:",
-        examples_per_page=3
-    )
+    output_colunas = gr.Textbox(label="Colunas Disponíveis:", lines=5)
+
+    gr.Markdown("""
+    Exemplos de perguntas:
+    1. Qual é o número de registros no arquivo?
+    2. Quais são os tipos de dados das colunas?
+    3. Quais são as estatísticas descritivas das colunas numéricas?
+    """)
 
     input_pergunta = gr.Textbox(label="Digite sua pergunta sobre os dados")
+
     botao_submeter = gr.Button("Enviar")
+
     output_resposta = gr.Textbox(label="Resposta")
 
     with gr.Row():
@@ -170,17 +172,18 @@ with gr.Blocks(theme='Soft') as app:
         botao_gerar_pdf = gr.Button("Gerar PDF")
 
     arquivo_pdf = gr.File(label="Download do PDF")
+
     botao_resetar = gr.Button("Quero analisar outro dataset!")
 
     df_estado = gr.State(value=None)
     historico_estado = gr.State(value=[])
 
-    input_arquivo.change(fn=carregar_dados, inputs=[input_arquivo, df_estado], outputs=[upload_status, tabela_dados, df_estado])
-    botao_submeter.click(fn=processar_pergunta, inputs=[input_pergunta, df_estado], outputs=output_resposta)
+    input_arquivo.change(fn=carregar_dados, inputs=[input_arquivo, df_estado], outputs=[upload_status, tabela_dados, df_estado, output_colunas], show_progress=True)
+    botao_submeter.click(fn=processar_pergunta, inputs=[input_pergunta, df_estado], outputs=output_resposta, show_progress=True)
     botao_limpeza.click(fn=limpar_pergunta_resposta, inputs=[], outputs=[input_pergunta, output_resposta])
     botao_add_pdf.click(fn=add_historico, inputs=[input_pergunta, output_resposta, historico_estado], outputs=historico_estado)
-    botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado], outputs=arquivo_pdf)
-    botao_resetar.click(fn=resetar_aplicação, inputs=[], outputs=[input_arquivo, upload_status, tabela_dados, output_resposta, arquivo_pdf, historico_estado, input_pergunta])
+    botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado], outputs=arquivo_pdf, show_progress=True)
+    botao_resetar.click(fn=resetar_aplicação, inputs=[], outputs=[input_arquivo, upload_status, tabela_dados, output_resposta, arquivo_pdf, historico_estado, input_pergunta, output_colunas])
 
 if __name__ == "__main__":
     app.launch()
