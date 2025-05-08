@@ -7,6 +7,7 @@ import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
 import os
+import io
 
 api_key = os.getenv("secret_key")
 
@@ -33,7 +34,7 @@ def pipeline_consulta(df):
         "{instruction_str}\n"
         "Consulta: {query_str}\n\n"
         "Expressão:"
-)
+    )
 
     response_synthesis_prompt_str = (
        "Dada uma pergunta de entrada, atue como analista de dados e elabore uma resposta a partir dos resultados da consulta.\n"
@@ -42,14 +43,13 @@ def pipeline_consulta(df):
        "Instruções do Pandas (opcional):\n{pandas_instructions}\n\n"
        "Saída do Pandas: {pandas_output}\n\n"
        "Resposta: \n\n"
-       "Ao final, exibir o código usado em para gerar a resposta, no formato: O código utilizado foi `{pandas_instructions}`"
     )
 
     pandas_prompt = PromptTemplate(pandas_prompt_str).partial_format(
-    instruction_str=instruction_str,
-    df_str=df.head(5),
-    colunas_detalhes=descrição_colunas(df)
-)
+        instruction_str=instruction_str,
+        df_str=df.head(5),
+        colunas_detalhes=descrição_colunas(df)
+    )
 
     pandas_output_parser = PandasInstructionParser(df)
     response_synthesis_prompt = PromptTemplate(response_synthesis_prompt_str)
@@ -93,14 +93,86 @@ def processar_pergunta(pergunta, df_estado):
         return resposta.message.content
     return ""
 
+def get_descriptive_stats_and_info(df):
+    """Gera o texto com estatísticas descritivas no formato de tabela Markdown."""
+    if df is None or df.empty:
+        return "Por favor, carregue um arquivo CSV primeiro."
+
+    output = io.StringIO()
+
+    # Estatísticas descritivas formatadas
+    output.write("### Estatísticas Descritivas:\n\n")
+
+    try:
+        # Gera estatísticas descritivas incluindo todas as colunas
+        stats_desc = df.describe(include='all')
+
+        # Cabeçalho da tabela
+        header = "| Estatística | " + " | ".join([f"{col}" for col in stats_desc.columns]) + " |"
+        output.write(header + "\n")
+
+        # Linha de separação
+        separator = "|" + "---|" * (len(stats_desc.columns) + 1)
+        output.write(separator + "\n")
+
+        # Linhas de estatísticas
+        for stat in stats_desc.index:
+            row = f"| {stat} |"
+            for col in stats_desc.columns:
+                val = stats_desc.loc[stat, col]
+                if pd.isna(val):
+                    row += " - |"
+                else:
+                    if stat in ['count', 'unique', 'freq']:
+                        row += f" {int(val)} |"
+                    elif stat in ['top']:
+                        row += f" {val} |"
+                    else:
+                        if val == int(val):
+                            row += f" {int(val)} |"
+                        else:
+                            row += f" {val:.2f} |".replace(".00 ", " ")
+            output.write(row + "\n")
+
+    except Exception as e:
+        output.write(f"Erro ao gerar estatísticas descritivas: {e}")
+
+    output.write("\n\n### Informações do DataFrame:\n")
+
+    try:
+        # Captura as informações do DataFrame para formatação personalizada
+        buffer = io.StringIO()
+        df.info(buf=buffer)
+        info_text = buffer.getvalue()
+
+        # Formata o texto de info para ser mais legível
+        formatted_info = info_text.replace("NaN", "-").replace("nan", "-")
+        output.write(formatted_info)
+    except Exception as e:
+        output.write(f"Erro ao gerar informações do DataFrame: {e}")
+
+    return output.getvalue()
+
 def add_historico(pergunta, resposta, historico_estado):
+    """Adiciona pergunta/resposta ao histórico."""
     if pergunta and resposta:
-        historico_estado.append((pergunta, resposta))
-        gr.Info("Adicionado ao PDF!", duration=2)
+        # Salva como um tuple (tipo, conteúdo)
+        historico_estado.append(("qa", (pergunta, resposta)))
+        gr.Info("Pergunta e resposta adicionadas ao histórico do PDF!", duration=2)
         return historico_estado
     return historico_estado
 
-def gerar_pdf(historico_estado):
+def add_stats_to_historico(stats_text, historico_estado):
+    """Adiciona texto de estatísticas ao histórico."""
+    if stats_text and "Por favor, carregue" not in stats_text: # Evita adicionar a mensagem de erro
+        # Salva estatísticas como um tuple (tipo, conteúdo)
+        historico_estado.append(("stats", stats_text))
+        gr.Info("Estatísticas adicionadas ao histórico do PDF!", duration=2)
+        return historico_estado
+    gr.Warning("Nenhuma estatística gerada para adicionar ao histórico.", duration=2)
+    return historico_estado
+
+def gerar_pdf(historico_estado, titulo, nome_usuario):
     if not historico_estado:
         return "Nenhum dado para adicionar ao PDF.", None
 
@@ -112,16 +184,42 @@ def gerar_pdf(historico_estado):
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_font('Arial', '', 12)
 
-    for pergunta, resposta in historico_estado:
-        pergunta_encoded = pergunta.encode('latin-1', 'replace').decode('latin-1')
-        resposta_encoded = resposta.encode('latin-1', 'replace').decode('latin-1')
+    # Adiciona título e nome do usuário ao PDF
+    if titulo:
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(0, 10, txt=titulo, ln=True, align='C')
+        pdf.ln(10)
 
-        pdf.set_font("Arial", 'B', 14)
-        pdf.multi_cell(0, 8, txt=pergunta_encoded)
-        pdf.ln(2)
-        pdf.set_font("Arial", '', 12)
-        pdf.multi_cell(0, 8, txt=resposta_encoded)
-        pdf.ln(6)
+    if nome_usuario:
+        pdf.set_font("Arial", 'I', 12)
+        pdf.cell(0, 10, txt=f"Relatório gerado por: {nome_usuario}", ln=True, align='C')
+        pdf.ln(10)
+
+    for entry_type, content in historico_estado:
+        if entry_type == "qa":
+            pergunta, resposta = content
+            pergunta_encoded = pergunta.encode('latin-1', 'replace').decode('latin-1')
+            resposta_encoded = resposta.encode('latin-1', 'replace').decode('latin-1')
+
+            pdf.set_font("Arial", 'B', 14)
+            pdf.multi_cell(0, 8, txt=pergunta_encoded)
+            pdf.ln(2)
+            pdf.set_font("Arial", '', 12)
+            pdf.multi_cell(0, 8, txt=resposta_encoded)
+            pdf.ln(6)
+        elif entry_type == "stats":
+            stats_text = content
+
+            # Substitui NaN por - no texto de estatísticas antes de codificar
+            stats_text = stats_text.replace("nan", "-")
+            stats_encoded = stats_text.encode('latin-1', 'replace').decode('latin-1')
+
+            pdf.set_font("Arial", 'B', 14)
+            pdf.multi_cell(0, 8, txt="Estatísticas e Informações do DataFrame:")
+            pdf.ln(2)
+            pdf.set_font("Arial", '', 10) # Usar fonte menor para stats
+            pdf.multi_cell(0, 6, txt=stats_encoded) # Usar espaçamento menor
+            pdf.ln(6)
 
     pdf.output(caminho_pdf)
     return caminho_pdf
@@ -129,8 +227,14 @@ def gerar_pdf(historico_estado):
 def limpar_pergunta_resposta():
     return "", ""
 
+def limpar_historico(historico_estado):
+    """Limpa o estado do histórico para o relatório PDF."""
+    gr.Info("Histórico do PDF limpo!")
+    return []
+
 def resetar_aplicação():
-    return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV.", pd.DataFrame(), "", None, [], "", ""
+    # Limpa todos os estados relevantes e componentes da UI
+    return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV.", pd.DataFrame(), "", "", None, [], "", "", ""
 
 with gr.Blocks(theme='Soft') as app:
 
@@ -140,7 +244,8 @@ with gr.Blocks(theme='Soft') as app:
     Carregue um arquivo CSV e faça perguntas sobre os dados. A cada pergunta, você poderá
     visualizar a resposta e, se desejar, adicionar essa interação ao PDF final, basta clicar
     em "Adicionar ao histórico do PDF". Para fazer uma nova pergunta, clique em "Limpar pergunta e resultado".
-    Após definir as perguntas e respostas no histórico, clique em "Gerar PDF". Assim, será possível
+    Você também pode visualizar as estatísticas descritivas do dataset e adicioná-las ao PDF.
+    Após definir as entradas no histórico, clique em "Gerar PDF". Assim, será possível
     baixar um PDF com o registro completo das suas interações. Se você quiser analisar um novo dataset,
     basta clicar em "Quero analisar outro dataset" ao final da página.
     ''')
@@ -152,6 +257,12 @@ with gr.Blocks(theme='Soft') as app:
     tabela_dados = gr.DataFrame()
 
     output_colunas = gr.Textbox(label="Colunas Disponíveis:", lines=5)
+
+    # Nova seção para estatísticas
+    with gr.Accordion("Estatísticas e Informações do Dataset", open=False): # Use Accordion to collapse/expand
+        botao_mostrar_stats = gr.Button("Mostrar Estatísticas e Info")
+        output_stats = gr.Textbox(label="Estatísticas e Info do DataFrame:", lines=15, interactive=False)
+        botao_add_stats_pdf = gr.Button("Adicionar Estatísticas ao Histórico do PDF")
 
     gr.Markdown("""
     Exemplos de perguntas:
@@ -166,9 +277,14 @@ with gr.Blocks(theme='Soft') as app:
 
     output_resposta = gr.Textbox(label="Resposta")
 
+    # Campos para título e nome do usuário (movidos para cima)
+    titulo = gr.Textbox(label="Título do Relatório")
+    nome_usuario = gr.Textbox(label="Seu Nome")
+
     with gr.Row():
         botao_limpeza = gr.Button("Limpar pergunta e resultado")
-        botao_add_pdf = gr.Button("Adicionar ao histórico do PDF")
+        botao_add_pdf = gr.Button("Adicionar Pergunta/Resposta ao Histórico do PDF") # Update button label
+        botao_limpar_historico = gr.Button("Limpar Histórico do PDF")
         botao_gerar_pdf = gr.Button("Gerar PDF")
 
     arquivo_pdf = gr.File(label="Download do PDF")
@@ -176,14 +292,24 @@ with gr.Blocks(theme='Soft') as app:
     botao_resetar = gr.Button("Quero analisar outro dataset!")
 
     df_estado = gr.State(value=None)
+    # Histórico agora armazena tuplas (tipo, conteúdo), onde tipo é "qa" ou "stats"
     historico_estado = gr.State(value=[])
 
+    # Conectando funções aos componentes
     input_arquivo.change(fn=carregar_dados, inputs=[input_arquivo, df_estado], outputs=[upload_status, tabela_dados, df_estado, output_colunas], show_progress=True)
+
+    # Conecta o novo botão de mostrar estatísticas
+    botao_mostrar_stats.click(fn=get_descriptive_stats_and_info, inputs=[df_estado], outputs=output_stats, show_progress=True)
+
+    # Conecta o novo botão de adicionar estatísticas ao PDF
+    botao_add_stats_pdf.click(fn=add_stats_to_historico, inputs=[output_stats, historico_estado], outputs=historico_estado, show_progress=False) # Show progress not needed for simple append
+
     botao_submeter.click(fn=processar_pergunta, inputs=[input_pergunta, df_estado], outputs=output_resposta, show_progress=True)
     botao_limpeza.click(fn=limpar_pergunta_resposta, inputs=[], outputs=[input_pergunta, output_resposta])
-    botao_add_pdf.click(fn=add_historico, inputs=[input_pergunta, output_resposta, historico_estado], outputs=historico_estado)
-    botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado], outputs=arquivo_pdf, show_progress=True)
-    botao_resetar.click(fn=resetar_aplicação, inputs=[], outputs=[input_arquivo, upload_status, tabela_dados, output_resposta, arquivo_pdf, historico_estado, input_pergunta, output_colunas])
+    botao_add_pdf.click(fn=add_historico, inputs=[input_pergunta, output_resposta, historico_estado], outputs=historico_estado) # This now calls the updated add_historico
+    botao_limpar_historico.click(fn=limpar_historico, inputs=[historico_estado], outputs=historico_estado)
+    botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado, titulo, nome_usuario], outputs=arquivo_pdf, show_progress=True)
+    botao_resetar.click(fn=resetar_aplicação, inputs=[], outputs=[input_arquivo, upload_status, tabela_dados, output_colunas, output_stats, arquivo_pdf, historico_estado, input_pergunta, output_resposta, titulo, nome_usuario]) # Added output_stats and output_resposta to reset
 
 if __name__ == "__main__":
     app.launch()
