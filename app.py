@@ -7,6 +7,8 @@ import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
 import os
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # API KEY do GROQ
 api_key = os.getenv("secret_key")
@@ -36,7 +38,7 @@ def pipeline_consulta(df):
         "{instruction_str}\n"
         "Consulta: {query_str}\n\n"
         "Expressão:"
-)
+    )
 
     response_synthesis_prompt_str = (
        "Dada uma pergunta de entrada, atue como analista de dados e elabore uma resposta a partir dos resultados da consulta.\n"
@@ -137,6 +139,17 @@ def limpar_pergunta_resposta():
 # Função para resetar a aplicação
 def resetar_aplicação():
     return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV.", pd.DataFrame(), "", None, [], ""
+
+# Função para gerar gráficos
+def gerar_grafico(df, coluna):
+    plt.figure(figsize=(10, 6))
+    sns.histplot(df[coluna], kde=True)
+    plt.title(f"Distribuição de {coluna}")
+    plt.xlabel(coluna)
+    plt.ylabel("Frequência")
+    plt.savefig("grafico.png")
+    plt.close()
+    return "grafico.png"
 
 # Criação da interface gradio
 with gr.Blocks(theme='Soft') as app:
