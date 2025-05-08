@@ -36,7 +36,7 @@ def pipeline_consulta(df):
         "{instruction_str}\n"
         "Consulta: {query_str}\n\n"
         "Expressão:"
-)
+    )
 
     response_synthesis_prompt_str = (
        "Dada uma pergunta de entrada, atue como analista de dados e elabore uma resposta a partir dos resultados da consulta.\n"
@@ -49,15 +49,13 @@ def pipeline_consulta(df):
     )
 
     pandas_prompt = PromptTemplate(pandas_prompt_str).partial_format(
-    instruction_str=instruction_str,
-    df_str=df.head(5),
-    colunas_detalhes=descrição_colunas(df)
-)
+        instruction_str=instruction_str,
+        df_str=df.head(5),
+        colunas_detalhes=descrição_colunas(df)
+    )
 
     pandas_output_parser = PandasInstructionParser(df)
     response_synthesis_prompt = PromptTemplate(response_synthesis_prompt_str)
-
-    # Criação do QueryPipeline
 
     qp = QP(
         modules={
@@ -81,7 +79,6 @@ def pipeline_consulta(df):
     qp.add_link("response_synthesis_prompt", "llm2")
     return qp
 
-# Função para carregar os dados
 def carregar_dados(caminho_arquivo, df_estado):
     if caminho_arquivo is None or caminho_arquivo == "":
         return "Por favor, faça o upload de um arquivo CSV para analisar.", pd.DataFrame(), df_estado
@@ -91,7 +88,6 @@ def carregar_dados(caminho_arquivo, df_estado):
     except Exception as e:
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado
 
-# Função para processar a pergunta
 def processar_pergunta(pergunta, df_estado):
     if df_estado is not None and pergunta:
         qp = pipeline_consulta(df_estado)
@@ -99,19 +95,16 @@ def processar_pergunta(pergunta, df_estado):
         return resposta.message.content
     return ""
 
-# Função para adicionar a pergunta e a resposta ao histórico
 def add_historico(pergunta, resposta, historico_estado):
     if pergunta and resposta:
         historico_estado.append((pergunta, resposta))
         gr.Info("Adicionado ao PDF!", duration=2)
         return historico_estado
 
-# Função para gerar o PDF
 def gerar_pdf(historico_estado):
     if not historico_estado:
         return "Nenhum dado para adicionar ao PDF.", None
 
-    # Gerar nome de arquivo com timestamp
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     caminho_pdf = f"relatorio_perguntas_respostas_{timestamp}.pdf"
 
@@ -130,21 +123,15 @@ def gerar_pdf(historico_estado):
     pdf.output(caminho_pdf)
     return caminho_pdf
 
-# Função para limpar a pergunta e a resposta
 def limpar_pergunta_resposta():
     return "", ""
 
-# Função para resetar a aplicação
 def resetar_aplicação():
     return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV.", pd.DataFrame(), "", None, [], ""
 
-# Criação da interface gradio
 with gr.Blocks(theme='Soft') as app:
-
-    # Título da app
     gr.Markdown("# Analisando os dados🔎🎲")
 
-    # Descrição
     gr.Markdown('''
     Carregue um arquivo CSV e faça perguntas sobre os dados. A cada pergunta, você poderá
     visualizar a resposta e, se desejar, adicionar essa interação ao PDF final, basta clicar
@@ -154,49 +141,40 @@ with gr.Blocks(theme='Soft') as app:
     basta clicar em "Quero analisar outro dataset" ao final da página.
     ''')
 
-    # Campo de entrada de arquivos
     input_arquivo = gr.File(file_count="single", type="filepath", label="Upload CSV")
-
-    # Status de upload
     upload_status = gr.Textbox(label="Status do Upload:")
-
-    # Tabela de dados
     tabela_dados = gr.DataFrame()
 
-    # Exemplos de perguntas
-    gr.Markdown("""
-    Exemplos de perguntas:
-    1. Qual é o número de registros no arquivo?
-    2. Quais são os tipos de dados das colunas?
-    3. Quais são as estatísticas descritivas das colunas numéricas?
-    """)
+    # Novo bloco de exemplos clicáveis (MUDANÇA PRINCIPAL AQUI)
+    gr.Markdown("### Exemplos de perguntas:")
+    gr.Examples(
+        examples=[
+            "Quantas linhas existem no dataset?",
+            "Quais são os tipos de dados de cada coluna?",
+            "Mostre as 5 primeiras entradas",
+            "Existem valores nulos no dataset?",
+            "Quais são os valores únicos na coluna X?"
+        ],
+        inputs=input_pergunta,
+        label="Clique em um exemplo para preencher:",
+        examples_per_page=3
+    )
 
-    # Campo de entrada de texto
     input_pergunta = gr.Textbox(label="Digite sua pergunta sobre os dados")
-
-    # Botão de envio posicionado após a pergunta
     botao_submeter = gr.Button("Enviar")
-
-    # Componente de resposta
     output_resposta = gr.Textbox(label="Resposta")
 
-    # Botões para limpar a pergunta e a resposta, adicionar ao historico e gerar o PDF
     with gr.Row():
         botao_limpeza = gr.Button("Limpar pergunta e resultado")
         botao_add_pdf = gr.Button("Adicionar ao histórico do PDF")
         botao_gerar_pdf = gr.Button("Gerar PDF")
 
-    # Componente de download
     arquivo_pdf = gr.File(label="Download do PDF")
-
-    # Botão para resetar a aplicação
     botao_resetar = gr.Button("Quero analisar outro dataset!")
 
-    # Gerenciamento de estados
     df_estado = gr.State(value=None)
     historico_estado = gr.State(value=[])
 
-    # Conectando funções aos componentes
     input_arquivo.change(fn=carregar_dados, inputs=[input_arquivo, df_estado], outputs=[upload_status, tabela_dados, df_estado])
     botao_submeter.click(fn=processar_pergunta, inputs=[input_pergunta, df_estado], outputs=output_resposta)
     botao_limpeza.click(fn=limpar_pergunta_resposta, inputs=[], outputs=[input_pergunta, output_resposta])
