@@ -1,15 +1,37 @@
----
-title: Analise De Dados LlamaIndex
-emoji: 🌍
-colorFrom: indigo
-colorTo: purple
-sdk: gradio
-sdk_version: 5.29.0
-app_file: app.py
-pinned: false
-license: mit
-short_description: Interface intuitiva para análise de dados CSV e LLamaIndex
-sadasd
----  sadasd
+# 📊 Analisador de Dados CSV/Excel com IA
 
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+Uma aplicação web que permite carregar arquivos CSV/Excel, fazer perguntas em linguagem natural sobre os dados e gerar relatórios PDF.
+
+## 🚀 Funcionalidades
+
+- Suporte a CSV e Excel (.xlsx, .xls, .xlsm, .xlsb)
+- Consultas em linguagem natural usando IA
+- Estatísticas descritivas automáticas
+- Geração de relatórios PDF
+- Interface web intuitiva
+
+## 🔧 Tecnologias
+
+- Python, Gradio, Pandas, LlamaIndex, Groq (Llama3-70B)
+
+## 📦 Instalação
+
+```bash
+# Clone o repositório
+git clone https://github.com/seu-usuario/analisador-dados-ia.git
+cd analisador-dados-ia
+
+# Instale as dependências
+pip install gradio pandas llama-index llama-index-llms-groq llama-index-experimental fpdf2 openpyxl xlrd python-dotenv
+
+# Configure a API Key do Groq
+echo "secret_key=sua_chave_groq_aqui" > .env
+
+# Execute a aplicação
+python app.py
+```
+
+
+
+
+
