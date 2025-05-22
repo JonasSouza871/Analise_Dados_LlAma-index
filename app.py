@@ -76,13 +76,63 @@ def pipeline_consulta(df):
     qp.add_link("response_synthesis_prompt", "llm2")
     return qp
 
+def detectar_tipo_arquivo(caminho_arquivo):
+    """Detecta o tipo de arquivo baseado na extensão."""
+    if caminho_arquivo is None:
+        return None
+    
+    extensao = caminho_arquivo.lower().split('.')[-1]
+    if extensao in ['csv']:
+        return 'csv'
+    elif extensao in ['xlsx', 'xls', 'xlsm', 'xlsb']:
+        return 'excel'
+    else:
+        return 'desconhecido'
+
 def carregar_dados(caminho_arquivo, df_estado):
     if caminho_arquivo is None or caminho_arquivo == "":
-        return "Por favor, faça o upload de um arquivo CSV para analisar.", pd.DataFrame(), df_estado, ""
+        return "Por favor, faça o upload de um arquivo CSV ou Excel para analisar.", pd.DataFrame(), df_estado, ""
+    
     try:
-        df = pd.read_csv(caminho_arquivo)
+        tipo_arquivo = detectar_tipo_arquivo(caminho_arquivo)
+        
+        if tipo_arquivo == 'csv':
+            # Tenta diferentes encodings para CSV
+            encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
+            df = None
+            
+            for encoding in encodings:
+                try:
+                    df = pd.read_csv(caminho_arquivo, encoding=encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if df is None:
+                return "Erro: Não foi possível ler o arquivo CSV com nenhum encoding suportado.", pd.DataFrame(), df_estado, ""
+                
+        elif tipo_arquivo == 'excel':
+            # Carrega arquivo Excel
+            try:
+                # Primeiro, tenta ler sem especificar a planilha (usa a primeira por padrão)
+                df = pd.read_excel(caminho_arquivo)
+            except Exception as e:
+                # Se houver erro, tenta especificar a primeira planilha explicitamente
+                try:
+                    df = pd.read_excel(caminho_arquivo, sheet_name=0)
+                except Exception as e2:
+                    return f"Erro ao carregar arquivo Excel: {str(e2)}", pd.DataFrame(), df_estado, ""
+        else:
+            return "Formato de arquivo não suportado. Por favor, faça upload de um arquivo CSV (.csv) ou Excel (.xlsx, .xls).", pd.DataFrame(), df_estado, ""
+        
+        # Verifica se o DataFrame foi carregado com sucesso
+        if df.empty:
+            return "O arquivo foi carregado, mas está vazio.", pd.DataFrame(), df_estado, ""
+        
         colunas_str = '\n'.join(df.columns)
-        return "Arquivo carregado com sucesso!", df.head(), df, colunas_str
+        tipo_arquivo_msg = "CSV" if tipo_arquivo == 'csv' else "Excel"
+        return f"Arquivo {tipo_arquivo_msg} carregado com sucesso! ({len(df)} linhas, {len(df.columns)} colunas)", df.head(), df, colunas_str
+        
     except Exception as e:
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, ""
 
@@ -96,7 +146,7 @@ def processar_pergunta(pergunta, df_estado):
 def get_descriptive_stats_and_info(df):
     """Gera o texto com estatísticas descritivas no formato de tabela Markdown."""
     if df is None or df.empty:
-        return "Por favor, carregue um arquivo CSV primeiro."
+        return "Por favor, carregue um arquivo CSV ou Excel primeiro."
 
     output = io.StringIO()
 
@@ -234,23 +284,30 @@ def limpar_historico(historico_estado):
 
 def resetar_aplicação():
     # Limpa todos os estados relevantes e componentes da UI
-    return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV.", pd.DataFrame(), "", "", None, [], "", "", ""
+    return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV ou Excel.", pd.DataFrame(), "", "", None, [], "", "", ""
 
 with gr.Blocks(theme='Soft') as app:
 
     gr.Markdown("# Analisando os dados🔎🎲")
 
     gr.Markdown('''
-    Carregue um arquivo CSV e faça perguntas sobre os dados. A cada pergunta, você poderá
+    Carregue um arquivo **CSV** ou **Excel** (.xlsx, .xls) e faça perguntas sobre os dados. A cada pergunta, você poderá
     visualizar a resposta e, se desejar, adicionar essa interação ao PDF final, basta clicar
     em "Adicionar ao histórico do PDF". Para fazer uma nova pergunta, clique em "Limpar pergunta e resultado".
     Você também pode visualizar as estatísticas descritivas do dataset e adicioná-las ao PDF.
     Após definir as entradas no histórico, clique em "Gerar PDF". Assim, será possível
     baixar um PDF com o registro completo das suas interações. Se você quiser analisar um novo dataset,
     basta clicar em "Quero analisar outro dataset" ao final da página.
+    
+    **Formatos suportados:** CSV (.csv), Excel (.xlsx, .xls, .xlsm, .xlsb)
     ''')
 
-    input_arquivo = gr.File(file_count="single", type="filepath", label="Upload CSV")
+    input_arquivo = gr.File(
+        file_count="single", 
+        type="filepath", 
+        label="Upload CSV ou Excel",
+        file_types=[".csv", ".xlsx", ".xls", ".xlsm", ".xlsb"]
+    )
 
     upload_status = gr.Textbox(label="Status do Upload:")
 
@@ -269,6 +326,8 @@ with gr.Blocks(theme='Soft') as app:
     1. Qual é o número de registros no arquivo?
     2. Quais são os tipos de dados das colunas?
     3. Quais são as estatísticas descritivas das colunas numéricas?
+    4. Quais são os valores únicos de uma coluna específica?
+    5. Quantos valores nulos existem em cada coluna?
     """)
 
     input_pergunta = gr.Textbox(label="Digite sua pergunta sobre os dados")
