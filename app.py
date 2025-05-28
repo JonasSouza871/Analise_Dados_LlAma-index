@@ -77,7 +77,6 @@ def pipeline_consulta(df):
     return qp
 
 def detectar_tipo_arquivo(caminho_arquivo):
-    """Detecta o tipo de arquivo baseado na extensão."""
     if caminho_arquivo is None:
         return None
     
@@ -132,21 +131,20 @@ def carregar_dados(caminho_arquivo, df_estado):
         return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, ""
 
 def processar_pergunta(pergunta, df_estado):
-    if df_estado is not None and pergunta:
+    if df_estado is not None and not df_estado.empty and pergunta:
         qp = pipeline_consulta(df_estado)
         resposta = qp.run(query_str=pergunta)
         return resposta.message.content
+    if df_estado is None or df_estado.empty:
+        return "Por favor, carregue um arquivo de dados primeiro."
     return ""
 
 def get_descriptive_stats_and_info(df):
-    """Gera o texto com estatísticas descritivas no formato de tabela Markdown."""
     if df is None or df.empty:
         return "Por favor, carregue um arquivo CSV ou Excel primeiro."
 
     output = io.StringIO()
-
     output.write("### Estatísticas Descritivas:\n\n")
-
     try:
         stats_desc = df.describe(include='all')
         header = "| Estatística | " + " | ".join([f"{col}" for col in stats_desc.columns]) + " |"
@@ -161,22 +159,17 @@ def get_descriptive_stats_and_info(df):
                 if pd.isna(val):
                     row += " - |"
                 else:
-                    if stat in ['count', 'unique', 'freq']:
+                    if isinstance(val, float) and stat not in ['count', 'unique']:
+                         row += f" {val:.2f} |"
+                    elif isinstance(val, (int, float)) and val == int(val) and stat not in ['unique']: # Mantem unique como int se for o caso
                         row += f" {int(val)} |"
-                    elif stat in ['top']:
-                        row += f" {val} |"
                     else:
-                        if val == int(val):
-                            row += f" {int(val)} |"
-                        else:
-                            row += f" {val:.2f} |".replace(".00 ", " ")
+                        row += f" {val} |"
             output.write(row + "\n")
-
     except Exception as e:
         output.write(f"Erro ao gerar estatísticas descritivas: {e}")
 
     output.write("\n\n### Informações do DataFrame:\n")
-
     try:
         buffer = io.StringIO()
         df.info(buf=buffer)
@@ -185,11 +178,9 @@ def get_descriptive_stats_and_info(df):
         output.write(formatted_info)
     except Exception as e:
         output.write(f"Erro ao gerar informações do DataFrame: {e}")
-
     return output.getvalue()
 
 def add_historico(pergunta, resposta, historico_estado):
-    """Adiciona pergunta/resposta ao histórico."""
     if pergunta and resposta:
         historico_estado.append(("qa", (pergunta, resposta)))
         gr.Info("Pergunta e resposta adicionadas ao histórico do PDF!", duration=2)
@@ -197,7 +188,6 @@ def add_historico(pergunta, resposta, historico_estado):
     return historico_estado
 
 def add_stats_to_historico(stats_text, historico_estado):
-    """Adiciona texto de estatísticas ao histórico."""
     if stats_text and "Por favor, carregue" not in stats_text:
         historico_estado.append(("stats", stats_text))
         gr.Info("Estatísticas adicionadas ao histórico do PDF!", duration=2)
@@ -207,68 +197,104 @@ def add_stats_to_historico(stats_text, historico_estado):
 
 def gerar_pdf(historico_estado, titulo, nome_usuario):
     if not historico_estado:
-        return "Nenhum dado para adicionar ao PDF.", None
+        gr.Warning("Nenhum dado no histórico para gerar o PDF.")
+        return None
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    caminho_pdf = f"relatorio_perguntas_respostas_{timestamp}.pdf"
+    safe_titulo = "".join(c for c in titulo if c.isalnum() or c in " _-").rstrip().replace(" ", "_")
+    safe_nome_usuario = "".join(c for c in nome_usuario if c.isalnum() or c in " _-").rstrip().replace(" ", "_")
+    
+    filename_parts = ["relatorio"]
+    if safe_titulo:
+        filename_parts.append(safe_titulo)
+    if safe_nome_usuario:
+        filename_parts.append(f"por_{safe_nome_usuario}")
+    filename_parts.append(timestamp)
+    
+    caminho_pdf = "_".join(filename_parts) + ".pdf"
+    caminho_pdf = caminho_pdf.replace("__", "_")
 
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_font('Arial', '', 12)
+    
+    default_font_family = 'Arial'
+    try:
+        pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
+        pdf.add_font('DejaVu', 'B', 'DejaVuSansCondensed-Bold.ttf', uni=True)
+        pdf.add_font('DejaVu', 'I', 'DejaVuSansCondensed-Oblique.ttf', uni=True)
+        default_font_family = 'DejaVu'
+    except RuntimeError:
+        pass
+    
+    pdf.set_font(default_font_family, '', 12)
 
     if titulo:
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(0, 10, txt=titulo, ln=True, align='C')
+        pdf.set_font(default_font_family, 'B', 16)
+        titulo_final = titulo.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else titulo
+        pdf.cell(0, 10, txt=titulo_final, ln=True, align='C')
         pdf.ln(10)
 
     if nome_usuario:
-        pdf.set_font("Arial", 'I', 12)
-        pdf.cell(0, 10, txt=f"Relatório gerado por: {nome_usuario}", ln=True, align='C')
+        pdf.set_font(default_font_family, 'I', 12)
+        nome_usuario_final = nome_usuario.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else nome_usuario
+        pdf.cell(0, 10, txt=f"Relatório gerado por: {nome_usuario_final}", ln=True, align='C')
         pdf.ln(10)
 
     for entry_type, content in historico_estado:
+        pdf.set_font(default_font_family, '', 12) 
         if entry_type == "qa":
             pergunta, resposta = content
-            pergunta_encoded = pergunta.encode('latin-1', 'replace').decode('latin-1')
-            resposta_encoded = resposta.encode('latin-1', 'replace').decode('latin-1')
+            pergunta_final = pergunta.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else pergunta
+            resposta_final = resposta.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else resposta
 
-            pdf.set_font("Arial", 'B', 14)
-            pdf.multi_cell(0, 8, txt=pergunta_encoded)
+            pdf.set_font(default_font_family, 'B', 14)
+            pdf.multi_cell(0, 8, txt=pergunta_final)
             pdf.ln(2)
-            pdf.set_font("Arial", '', 12)
-            pdf.multi_cell(0, 8, txt=resposta_encoded)
+            pdf.set_font(default_font_family, '', 12)
+            pdf.multi_cell(0, 8, txt=resposta_final)
             pdf.ln(6)
         elif entry_type == "stats":
             stats_text = content
-            stats_text = stats_text.replace("nan", "-")
-            stats_encoded = stats_text.encode('latin-1', 'replace').decode('latin-1')
+            stats_for_pdf = stats_text.replace("nan", "-")
+            stats_for_pdf = stats_for_pdf.replace("### Estatísticas Descritivas:", "Estatísticas Descritivas:")
+            stats_for_pdf = stats_for_pdf.replace("### Informações do DataFrame:", "\nInformações do DataFrame:")
+            stats_for_pdf = stats_for_pdf.replace("|", " ") 
+            stats_for_pdf = "\n".join([line for line in stats_for_pdf.split('\n') if not (line.strip().replace('-', '').replace(' ', '') == '' and len(line.strip()) > 0) or not line.strip() ])
 
-            pdf.set_font("Arial", 'B', 14)
+
+            stats_final = stats_for_pdf.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else stats_for_pdf
+
+            pdf.set_font(default_font_family, 'B', 14)
             pdf.multi_cell(0, 8, txt="Estatísticas e Informações do DataFrame:")
             pdf.ln(2)
-            pdf.set_font("Arial", '', 10)
-            pdf.multi_cell(0, 6, txt=stats_encoded)
+            pdf.set_font(default_font_family, '', 10)
+            pdf.multi_cell(0, 6, txt=stats_final)
             pdf.ln(6)
-
-    pdf.output(caminho_pdf)
-    return caminho_pdf
+    try:
+        pdf.output(caminho_pdf)
+        gr.Info(f"PDF gerado com sucesso: {caminho_pdf}")
+        return caminho_pdf
+    except Exception as e:
+        gr.Error(f"Erro ao gerar PDF: {str(e)}")
+        return None
 
 def limpar_pergunta_resposta():
     return "", ""
 
 def limpar_historico(historico_estado):
-    """Limpa o estado do histórico para o relatório PDF."""
-    gr.Info("Histórico do PDF limpo!")
+    if not historico_estado:
+        gr.Warning("Histórico do PDF já está vazio.")
+    else:
+        gr.Info("Histórico do PDF limpo com sucesso!")
     return []
 
 def resetar_aplicação():
     return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV ou Excel.", pd.DataFrame(), "", "", None, [], "", "", ""
 
+
 with gr.Blocks(theme='Soft') as app:
-
     gr.Markdown("# Analisando os dados🔎🎲")
-
     gr.Markdown('''
     Carregue um arquivo **CSV** ou **Excel** (.xlsx, .xls) e faça perguntas sobre os dados. A cada pergunta, você poderá
     visualizar a resposta e, se desejar, adicionar essa interação ao PDF final, basta clicar
@@ -278,7 +304,7 @@ with gr.Blocks(theme='Soft') as app:
     baixar um PDF com o registro completo das suas interações. Se você quiser analisar um novo dataset,
     basta clicar em "Quero analisar outro dataset" ao final da página.
     
-    **Formatos suportados:** CSV (.csv), Excel Needs to be corrected (.xlsx, .xls, .xlsm, .xlsb)
+    **Formatos suportados:** CSV (.csv), Excel (.xlsx, .xls, .xlsm, .xlsb)
     ''')
 
     input_arquivo = gr.File(
@@ -287,11 +313,8 @@ with gr.Blocks(theme='Soft') as app:
         label="Upload CSV ou Excel",
         file_types=[".csv", ".xlsx", ".xls", ".xlsm", ".xlsb"]
     )
-
     upload_status = gr.Textbox(label="Status do Upload:")
-
     tabela_dados = gr.DataFrame()
-
     output_colunas = gr.Textbox(label="Colunas Disponíveis:", lines=5)
 
     with gr.Accordion("Estatísticas e Informações do Dataset", open=False):
@@ -319,9 +342,7 @@ with gr.Blocks(theme='Soft') as app:
     """)
 
     input_pergunta = gr.Textbox(label="Digite sua pergunta sobre os dados")
-
     botao_submeter = gr.Button("Enviar")
-
     output_resposta = gr.Textbox(label="Resposta")
 
     titulo = gr.Textbox(label="Título do Relatório")
@@ -334,7 +355,6 @@ with gr.Blocks(theme='Soft') as app:
         botao_gerar_pdf = gr.Button("Gerar PDF")
 
     arquivo_pdf = gr.File(label="Download do PDF")
-
     botao_resetar = gr.Button("Quero analisar outro dataset!")
 
     df_estado = gr.State(value=None)
@@ -345,7 +365,7 @@ with gr.Blocks(theme='Soft') as app:
     botao_add_stats_pdf.click(fn=add_stats_to_historico, inputs=[output_stats, historico_estado], outputs=historico_estado, show_progress=False)
     botao_submeter.click(fn=processar_pergunta, inputs=[input_pergunta, df_estado], outputs=output_resposta, show_progress=True)
     botao_limpeza.click(fn=limpar_pergunta_resposta, inputs=[], outputs=[input_pergunta, output_resposta])
-    botao_add_pdf.click/ns=[input_pergunta, output_resposta, historico_estado], outputs=historico_estado)
+    botao_add_pdf.click(fn=add_historico, inputs=[input_pergunta, output_resposta, historico_estado], outputs=historico_estado)
     botao_limpar_historico.click(fn=limpar_historico, inputs=[historico_estado], outputs=historico_estado)
     botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado, titulo, nome_usuario], outputs=arquivo_pdf, show_progress=True)
     botao_resetar.click(fn=resetar_aplicação, inputs=[], outputs=[input_arquivo, upload_status, tabela_dados, output_colunas, output_stats, arquivo_pdf, historico_estado, input_pergunta, output_resposta, titulo, nome_usuario])
