@@ -89,7 +89,9 @@ def detectar_tipo_arquivo(caminho_arquivo):
         return 'desconhecido'
 
 def carregar_dados(caminho_arquivo, df_estado):
-    empty_stats_output = "" # Valor para limpar o output_stats
+    empty_stats_output = "" 
+    additional_info_sheets = ""
+
     if caminho_arquivo is None or caminho_arquivo == "":
         return "Por favor, faça o upload de um arquivo CSV ou Excel para analisar.", pd.DataFrame(), df_estado, "", empty_stats_output
     
@@ -99,25 +101,36 @@ def carregar_dados(caminho_arquivo, df_estado):
         if tipo_arquivo == 'csv':
             encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
             df = None
-            
             for encoding in encodings:
                 try:
                     df = pd.read_csv(caminho_arquivo, encoding=encoding)
                     break
                 except UnicodeDecodeError:
                     continue
-            
             if df is None:
                 return "Erro: Não foi possível ler o arquivo CSV com nenhum encoding suportado.", pd.DataFrame(), df_estado, "", empty_stats_output
                 
         elif tipo_arquivo == 'excel':
             try:
-                df = pd.read_excel(caminho_arquivo)
-            except Exception as e:
-                try:
-                    df = pd.read_excel(caminho_arquivo, sheet_name=0)
-                except Exception as e2:
-                    return f"Erro ao carregar arquivo Excel: {str(e2)}", pd.DataFrame(), df_estado, "", empty_stats_output
+                xls = pd.ExcelFile(caminho_arquivo)
+                sheet_names = xls.sheet_names
+                
+                if not sheet_names:
+                    return "Erro: Arquivo Excel não contém planilhas.", pd.DataFrame(), df_estado, "", empty_stats_output
+
+                df = pd.read_excel(xls, sheet_name=sheet_names[0]) 
+                
+                loaded_sheet_name = sheet_names[0]
+                if len(sheet_names) > 1:
+                    outras_planilhas_str = str(sheet_names[1:])
+                    max_len_outras = 70 
+                    if len(outras_planilhas_str) > max_len_outras:
+                        outras_planilhas_str = outras_planilhas_str[:max_len_outras-3] + "..."
+                    additional_info_sheets = f" (Planilha: '{loaded_sheet_name}'. Outras: {outras_planilhas_str})"
+                else:
+                    additional_info_sheets = f" (Planilha: '{loaded_sheet_name}')"
+            except Exception as e_excel:
+                 return f"Erro ao processar arquivo Excel: {str(e_excel)}", pd.DataFrame(), df_estado, "", empty_stats_output
         else:
             return "Formato de arquivo não suportado. Por favor, faça upload de um arquivo CSV (.csv) ou Excel (.xlsx, .xls).", pd.DataFrame(), df_estado, "", empty_stats_output
         
@@ -126,10 +139,17 @@ def carregar_dados(caminho_arquivo, df_estado):
         
         colunas_str = '\n'.join(df.columns)
         tipo_arquivo_msg = "CSV" if tipo_arquivo == 'csv' else "Excel"
-        return f"Arquivo {tipo_arquivo_msg} carregado com sucesso! ({len(df)} linhas, {len(df.columns)} colunas)", df.head(), df, colunas_str, empty_stats_output
         
-    except Exception as e:
-        return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, "", empty_stats_output
+        success_msg_base = f"Arquivo {tipo_arquivo_msg} carregado com sucesso! ({len(df)} linhas, {len(df.columns)} colunas)"
+        
+        final_success_msg = success_msg_base
+        if tipo_arquivo == 'excel': # additional_info_sheets will have content if excel processing was successful
+            final_success_msg += additional_info_sheets
+            
+        return final_success_msg, df.head(), df, colunas_str, empty_stats_output
+        
+    except Exception as e: # Catch-all for other unexpected errors during file processing
+        return f"Erro inesperado ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, "", empty_stats_output
 
 def processar_pergunta(pergunta, df_estado):
     if df_estado is not None and not df_estado.empty and pergunta:
@@ -372,7 +392,7 @@ with gr.Blocks(theme='Soft') as app:
     input_arquivo.change(
         fn=carregar_dados, 
         inputs=[input_arquivo, df_estado], 
-        outputs=[upload_status, tabela_dados, df_estado, output_colunas, output_stats], # output_stats adicionado aqui
+        outputs=[upload_status, tabela_dados, df_estado, output_colunas, output_stats], 
         show_progress=True
     )
     botao_mostrar_stats.click(fn=get_descriptive_stats_and_info, inputs=[df_estado], outputs=output_stats, show_progress=True)
