@@ -161,7 +161,7 @@ def get_descriptive_stats_and_info(df):
                 else:
                     if isinstance(val, float) and stat not in ['count', 'unique']:
                          row += f" {val:.2f} |"
-                    elif isinstance(val, (int, float)) and val == int(val) and stat not in ['unique']: # Mantem unique como int se for o caso
+                    elif isinstance(val, (int, float)) and val == int(val) and stat not in ['unique']: 
                         row += f" {int(val)} |"
                     else:
                         row += f" {val} |"
@@ -262,7 +262,6 @@ def gerar_pdf(historico_estado, titulo, nome_usuario):
             stats_for_pdf = stats_for_pdf.replace("|", " ") 
             stats_for_pdf = "\n".join([line for line in stats_for_pdf.split('\n') if not (line.strip().replace('-', '').replace(' ', '') == '' and len(line.strip()) > 0) or not line.strip() ])
 
-
             stats_final = stats_for_pdf.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else stats_for_pdf
 
             pdf.set_font(default_font_family, 'B', 14)
@@ -289,9 +288,18 @@ def limpar_historico(historico_estado):
         gr.Info("Histórico do PDF limpo com sucesso!")
     return []
 
-def resetar_aplicação():
+def resetar_aplicação_base():
     return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV ou Excel.", pd.DataFrame(), "", "", None, [], "", "", ""
 
+def update_interactivity_add_qa(pergunta, resposta):
+    return gr.update(interactive=bool(pergunta and resposta))
+
+def update_interactivity_add_stats(stats_text):
+    return gr.update(interactive=bool(stats_text and "Por favor, carregue" not in stats_text))
+
+def update_interactivity_hist_pdf_buttons(historico_list):
+    interactive = bool(historico_list)
+    return gr.update(interactive=interactive), gr.update(interactive=interactive)
 
 with gr.Blocks(theme='Soft') as app:
     gr.Markdown("# Analisando os dados🔎🎲")
@@ -320,7 +328,7 @@ with gr.Blocks(theme='Soft') as app:
     with gr.Accordion("Estatísticas e Informações do Dataset", open=False):
         botao_mostrar_stats = gr.Button("Mostrar Estatísticas e Info")
         output_stats = gr.Textbox(label="Estatísticas e Info do DataFrame:", lines=15, interactive=False)
-        botao_add_stats_pdf = gr.Button("Adicionar Estatísticas ao Histórico do PDF")
+        botao_add_stats_pdf = gr.Button("Adicionar Estatísticas ao Histórico do PDF", interactive=False)
 
     gr.Markdown("""
     Exemplos de perguntas:
@@ -350,9 +358,9 @@ with gr.Blocks(theme='Soft') as app:
 
     with gr.Row():
         botao_limpeza = gr.Button("Limpar pergunta e resultado")
-        botao_add_pdf = gr.Button("Adicionar Pergunta/Resposta ao Histórico do PDF")
-        botao_limpar_historico = gr.Button("Limpar Histórico do PDF")
-        botao_gerar_pdf = gr.Button("Gerar PDF")
+        botao_add_pdf = gr.Button("Adicionar Pergunta/Resposta ao Histórico do PDF", interactive=False)
+        botao_limpar_historico = gr.Button("Limpar Histórico do PDF", interactive=False)
+        botao_gerar_pdf = gr.Button("Gerar PDF", interactive=False)
 
     arquivo_pdf = gr.File(label="Download do PDF")
     botao_resetar = gr.Button("Quero analisar outro dataset!")
@@ -362,13 +370,43 @@ with gr.Blocks(theme='Soft') as app:
 
     input_arquivo.change(fn=carregar_dados, inputs=[input_arquivo, df_estado], outputs=[upload_status, tabela_dados, df_estado, output_colunas], show_progress=True)
     botao_mostrar_stats.click(fn=get_descriptive_stats_and_info, inputs=[df_estado], outputs=output_stats, show_progress=True)
+    
+    output_stats.change(fn=update_interactivity_add_stats, inputs=output_stats, outputs=botao_add_stats_pdf)
     botao_add_stats_pdf.click(fn=add_stats_to_historico, inputs=[output_stats, historico_estado], outputs=historico_estado, show_progress=False)
+    
     botao_submeter.click(fn=processar_pergunta, inputs=[input_pergunta, df_estado], outputs=output_resposta, show_progress=True)
+    
+    input_pergunta.change(fn=update_interactivity_add_qa, inputs=[input_pergunta, output_resposta], outputs=botao_add_pdf)
+    output_resposta.change(fn=update_interactivity_add_qa, inputs=[input_pergunta, output_resposta], outputs=botao_add_pdf)
+    
     botao_limpeza.click(fn=limpar_pergunta_resposta, inputs=[], outputs=[input_pergunta, output_resposta])
+    
     botao_add_pdf.click(fn=add_historico, inputs=[input_pergunta, output_resposta, historico_estado], outputs=historico_estado)
+    
+    historico_estado.change(fn=update_interactivity_hist_pdf_buttons, inputs=historico_estado, outputs=[botao_limpar_historico, botao_gerar_pdf])
+    
     botao_limpar_historico.click(fn=limpar_historico, inputs=[historico_estado], outputs=historico_estado)
     botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado, titulo, nome_usuario], outputs=arquivo_pdf, show_progress=True)
-    botao_resetar.click(fn=resetar_aplicação, inputs=[], outputs=[input_arquivo, upload_status, tabela_dados, output_colunas, output_stats, arquivo_pdf, historico_estado, input_pergunta, output_resposta, titulo, nome_usuario])
+
+    def resetar_aplicacao_completo():
+        base_outputs = resetar_aplicação_base()
+        return list(base_outputs) + [
+            gr.update(interactive=False), 
+            gr.update(interactive=False), 
+            gr.update(interactive=False),
+            gr.update(interactive=False)
+        ]
+
+    botao_resetar.click(
+        fn=resetar_aplicacao_completo, 
+        inputs=[], 
+        outputs=[
+            input_arquivo, upload_status, tabela_dados, output_colunas, 
+            output_stats, arquivo_pdf, historico_estado, input_pergunta, 
+            output_resposta, titulo, nome_usuario,
+            botao_add_pdf, botao_add_stats_pdf, botao_limpar_historico, botao_gerar_pdf 
+        ]
+    )
 
 if __name__ == "__main__":
     app.launch()
