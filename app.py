@@ -89,8 +89,9 @@ def detectar_tipo_arquivo(caminho_arquivo):
         return 'desconhecido'
 
 def carregar_dados(caminho_arquivo, df_estado):
+    empty_stats_output = "" # Valor para limpar o output_stats
     if caminho_arquivo is None or caminho_arquivo == "":
-        return "Por favor, faça o upload de um arquivo CSV ou Excel para analisar.", pd.DataFrame(), df_estado, ""
+        return "Por favor, faça o upload de um arquivo CSV ou Excel para analisar.", pd.DataFrame(), df_estado, "", empty_stats_output
     
     try:
         tipo_arquivo = detectar_tipo_arquivo(caminho_arquivo)
@@ -107,7 +108,7 @@ def carregar_dados(caminho_arquivo, df_estado):
                     continue
             
             if df is None:
-                return "Erro: Não foi possível ler o arquivo CSV com nenhum encoding suportado.", pd.DataFrame(), df_estado, ""
+                return "Erro: Não foi possível ler o arquivo CSV com nenhum encoding suportado.", pd.DataFrame(), df_estado, "", empty_stats_output
                 
         elif tipo_arquivo == 'excel':
             try:
@@ -116,19 +117,19 @@ def carregar_dados(caminho_arquivo, df_estado):
                 try:
                     df = pd.read_excel(caminho_arquivo, sheet_name=0)
                 except Exception as e2:
-                    return f"Erro ao carregar arquivo Excel: {str(e2)}", pd.DataFrame(), df_estado, ""
+                    return f"Erro ao carregar arquivo Excel: {str(e2)}", pd.DataFrame(), df_estado, "", empty_stats_output
         else:
-            return "Formato de arquivo não suportado. Por favor, faça upload de um arquivo CSV (.csv) ou Excel (.xlsx, .xls).", pd.DataFrame(), df_estado, ""
+            return "Formato de arquivo não suportado. Por favor, faça upload de um arquivo CSV (.csv) ou Excel (.xlsx, .xls).", pd.DataFrame(), df_estado, "", empty_stats_output
         
         if df.empty:
-            return "O arquivo foi carregado, mas está vazio.", pd.DataFrame(), df_estado, ""
+            return "O arquivo foi carregado, mas está vazio.", pd.DataFrame(), df_estado, "", empty_stats_output
         
         colunas_str = '\n'.join(df.columns)
         tipo_arquivo_msg = "CSV" if tipo_arquivo == 'csv' else "Excel"
-        return f"Arquivo {tipo_arquivo_msg} carregado com sucesso! ({len(df)} linhas, {len(df.columns)} colunas)", df.head(), df, colunas_str
+        return f"Arquivo {tipo_arquivo_msg} carregado com sucesso! ({len(df)} linhas, {len(df.columns)} colunas)", df.head(), df, colunas_str, empty_stats_output
         
     except Exception as e:
-        return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, ""
+        return f"Erro ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, "", empty_stats_output
 
 def processar_pergunta(pergunta, df_estado):
     if df_estado is not None and not df_estado.empty and pergunta:
@@ -289,7 +290,7 @@ def limpar_historico(historico_estado):
     return []
 
 def resetar_aplicação_base():
-    return None, "A aplicação foi resetada. Por favor, faça upload de um novo arquivo CSV ou Excel.", pd.DataFrame(), "", "", None, [], "", "", ""
+    return None, "A aplicação foi resetada. Por favor, faça o upload de um novo arquivo CSV ou Excel.", pd.DataFrame(), "", "", None, [], "", "", ""
 
 def update_interactivity_add_qa(pergunta, resposta):
     return gr.update(interactive=bool(pergunta and resposta))
@@ -368,7 +369,12 @@ with gr.Blocks(theme='Soft') as app:
     df_estado = gr.State(value=None)
     historico_estado = gr.State(value=[])
 
-    input_arquivo.change(fn=carregar_dados, inputs=[input_arquivo, df_estado], outputs=[upload_status, tabela_dados, df_estado, output_colunas], show_progress=True)
+    input_arquivo.change(
+        fn=carregar_dados, 
+        inputs=[input_arquivo, df_estado], 
+        outputs=[upload_status, tabela_dados, df_estado, output_colunas, output_stats], # output_stats adicionado aqui
+        show_progress=True
+    )
     botao_mostrar_stats.click(fn=get_descriptive_stats_and_info, inputs=[df_estado], outputs=output_stats, show_progress=True)
     
     output_stats.change(fn=update_interactivity_add_stats, inputs=output_stats, outputs=botao_add_stats_pdf)
