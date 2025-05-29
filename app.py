@@ -100,6 +100,15 @@ def is_dataframe_empty(df):
     """Check if the DataFrame is empty."""
     return df is None or df.empty
 
+def download_csv(df):
+    """Convert DataFrame to CSV and return as a file."""
+    if is_dataframe_empty(df):
+        gr.Warning("DataFrame está vazio. Não há dados para baixar.")
+        return None
+    csv_file = "dataframe.csv"
+    df.to_csv(csv_file, index=False)
+    return csv_file
+
 def carregar_dados(caminho_arquivo, df_estado):
     empty_stats_output = ""
     additional_info_sheets = ""
@@ -396,6 +405,9 @@ with gr.Blocks(theme='Soft') as app:
         botao_gerar_pdf = gr.Button("Gerar PDF", interactive=False)
 
     arquivo_pdf = gr.File(label="Download do PDF")
+    botao_download_csv = gr.Button("Baixar DataFrame como CSV")
+    arquivo_csv = gr.File(label="Download do CSV")
+
     botao_resetar = gr.Button("Quero analisar outro dataset!")
 
     df_estado = gr.State(value=None)
@@ -425,6 +437,8 @@ with gr.Blocks(theme='Soft') as app:
 
     botao_limpar_historico.click(fn=limpar_historico, inputs=[historico_estado], outputs=historico_estado)
     botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado, titulo, nome_usuario], outputs=arquivo_pdf, show_progress=True)
+
+    botao_download_csv.click(fn=download_csv, inputs=[df_estado], outputs=arquivo_csv)
 
     def resetar_aplicacao_completo():
         base_outputs = resetar_aplicação_base()
