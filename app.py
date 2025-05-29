@@ -1,7 +1,15 @@
+"""
+Data Analysis Application with Gradio Interface
+
+This script provides a Gradio-based interface for uploading CSV or Excel files,
+asking questions about the data, and generating a PDF report with the interactions.
+It uses the Groq API for natural language processing and pandas for data manipulation.
+"""
+
 from llama_index.llms.groq import Groq
 from llama_index.core import PromptTemplate
 from llama_index.experimental.query_engine.pandas import PandasInstructionParser
-from llama_index.core.query_pipeline import (QueryPipeline as QP, Link, InputComponent)
+from llama_index.core.query_pipeline import QueryPipeline as QP, Link, InputComponent
 import gradio as gr
 import pandas as pd
 from fpdf import FPDF
@@ -37,12 +45,12 @@ def pipeline_consulta(df):
     )
 
     response_synthesis_prompt_str = (
-       "Dada uma pergunta de entrada, atue como analista de dados e elabore uma resposta a partir dos resultados da consulta.\n"
-       "Responda de forma natural, sem introduções como 'A resposta é:' ou algo semelhante.\n"
-       "Consulta: {query_str}\n\n"
-       "Instruções do Pandas (opcional):\n{pandas_instructions}\n\n"
-       "Saída do Pandas: {pandas_output}\n\n"
-       "Resposta: \n\n"
+        "Dada uma pergunta de entrada, atue como analista de dados e elabore uma resposta a partir dos resultados da consulta.\n"
+        "Responda de forma natural, sem introduções como 'A resposta é:' ou algo semelhante.\n"
+        "Consulta: {query_str}\n\n"
+        "Instruções do Pandas (opcional):\n{pandas_instructions}\n\n"
+        "Saída do Pandas: {pandas_output}\n\n"
+        "Resposta: \n\n"
     )
 
     pandas_prompt = PromptTemplate(pandas_prompt_str).partial_format(
@@ -79,7 +87,7 @@ def pipeline_consulta(df):
 def detectar_tipo_arquivo(caminho_arquivo):
     if caminho_arquivo is None:
         return None
-    
+
     extensao = caminho_arquivo.lower().split('.')[-1]
     if extensao in ['csv']:
         return 'csv'
@@ -88,16 +96,20 @@ def detectar_tipo_arquivo(caminho_arquivo):
     else:
         return 'desconhecido'
 
+def is_dataframe_empty(df):
+    """Check if the DataFrame is empty."""
+    return df is None or df.empty
+
 def carregar_dados(caminho_arquivo, df_estado):
-    empty_stats_output = "" 
+    empty_stats_output = ""
     additional_info_sheets = ""
 
     if caminho_arquivo is None or caminho_arquivo == "":
         return "Por favor, faça o upload de um arquivo CSV ou Excel para analisar.", pd.DataFrame(), df_estado, "", empty_stats_output
-    
+
     try:
         tipo_arquivo = detectar_tipo_arquivo(caminho_arquivo)
-        
+
         if tipo_arquivo == 'csv':
             encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
             df = None
@@ -109,59 +121,59 @@ def carregar_dados(caminho_arquivo, df_estado):
                     continue
             if df is None:
                 return "Erro: Não foi possível ler o arquivo CSV com nenhum encoding suportado.", pd.DataFrame(), df_estado, "", empty_stats_output
-                
+
         elif tipo_arquivo == 'excel':
             try:
                 xls = pd.ExcelFile(caminho_arquivo)
                 sheet_names = xls.sheet_names
-                
+
                 if not sheet_names:
                     return "Erro: Arquivo Excel não contém planilhas.", pd.DataFrame(), df_estado, "", empty_stats_output
 
-                df = pd.read_excel(xls, sheet_name=sheet_names[0]) 
-                
+                df = pd.read_excel(xls, sheet_name=sheet_names[0])
+
                 loaded_sheet_name = sheet_names[0]
                 if len(sheet_names) > 1:
                     outras_planilhas_str = str(sheet_names[1:])
-                    max_len_outras = 70 
+                    max_len_outras = 70
                     if len(outras_planilhas_str) > max_len_outras:
                         outras_planilhas_str = outras_planilhas_str[:max_len_outras-3] + "..."
                     additional_info_sheets = f" (Planilha: '{loaded_sheet_name}'. Outras: {outras_planilhas_str})"
                 else:
                     additional_info_sheets = f" (Planilha: '{loaded_sheet_name}')"
             except Exception as e_excel:
-                 return f"Erro ao processar arquivo Excel: {str(e_excel)}", pd.DataFrame(), df_estado, "", empty_stats_output
+                return f"Erro ao processar arquivo Excel: {str(e_excel)}", pd.DataFrame(), df_estado, "", empty_stats_output
         else:
             return "Formato de arquivo não suportado. Por favor, faça upload de um arquivo CSV (.csv) ou Excel (.xlsx, .xls).", pd.DataFrame(), df_estado, "", empty_stats_output
-        
-        if df.empty:
+
+        if is_dataframe_empty(df):
             return "O arquivo foi carregado, mas está vazio.", pd.DataFrame(), df_estado, "", empty_stats_output
-        
+
         colunas_str = '\n'.join(df.columns)
         tipo_arquivo_msg = "CSV" if tipo_arquivo == 'csv' else "Excel"
-        
+
         success_msg_base = f"Arquivo {tipo_arquivo_msg} carregado com sucesso! ({len(df)} linhas, {len(df.columns)} colunas)"
-        
+
         final_success_msg = success_msg_base
-        if tipo_arquivo == 'excel': # additional_info_sheets will have content if excel processing was successful
+        if tipo_arquivo == 'excel':
             final_success_msg += additional_info_sheets
-            
+
         return final_success_msg, df.head(), df, colunas_str, empty_stats_output
-        
-    except Exception as e: # Catch-all for other unexpected errors during file processing
+
+    except Exception as e:
         return f"Erro inesperado ao carregar arquivo: {str(e)}", pd.DataFrame(), df_estado, "", empty_stats_output
 
 def processar_pergunta(pergunta, df_estado):
-    if df_estado is not None and not df_estado.empty and pergunta:
+    if is_dataframe_empty(df_estado):
+        return "Por favor, carregue um arquivo de dados primeiro."
+    if pergunta:
         qp = pipeline_consulta(df_estado)
         resposta = qp.run(query_str=pergunta)
         return resposta.message.content
-    if df_estado is None or df_estado.empty:
-        return "Por favor, carregue um arquivo de dados primeiro."
     return ""
 
 def get_descriptive_stats_and_info(df):
-    if df is None or df.empty:
+    if is_dataframe_empty(df):
         return "Por favor, carregue um arquivo CSV ou Excel primeiro."
 
     output = io.StringIO()
@@ -181,8 +193,8 @@ def get_descriptive_stats_and_info(df):
                     row += " - |"
                 else:
                     if isinstance(val, float) and stat not in ['count', 'unique']:
-                         row += f" {val:.2f} |"
-                    elif isinstance(val, (int, float)) and val == int(val) and stat not in ['unique']: 
+                        row += f" {val:.2f} |"
+                    elif isinstance(val, (int, float)) and val == int(val) and stat not in ['unique']:
                         row += f" {int(val)} |"
                     else:
                         row += f" {val} |"
@@ -224,21 +236,21 @@ def gerar_pdf(historico_estado, titulo, nome_usuario):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     safe_titulo = "".join(c for c in titulo if c.isalnum() or c in " _-").rstrip().replace(" ", "_")
     safe_nome_usuario = "".join(c for c in nome_usuario if c.isalnum() or c in " _-").rstrip().replace(" ", "_")
-    
+
     filename_parts = ["relatorio"]
     if safe_titulo:
         filename_parts.append(safe_titulo)
     if safe_nome_usuario:
         filename_parts.append(f"por_{safe_nome_usuario}")
     filename_parts.append(timestamp)
-    
+
     caminho_pdf = "_".join(filename_parts) + ".pdf"
     caminho_pdf = caminho_pdf.replace("__", "_")
 
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
-    
+
     default_font_family = 'Arial'
     try:
         pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
@@ -247,7 +259,7 @@ def gerar_pdf(historico_estado, titulo, nome_usuario):
         default_font_family = 'DejaVu'
     except RuntimeError:
         pass
-    
+
     pdf.set_font(default_font_family, '', 12)
 
     if titulo:
@@ -263,7 +275,7 @@ def gerar_pdf(historico_estado, titulo, nome_usuario):
         pdf.ln(10)
 
     for entry_type, content in historico_estado:
-        pdf.set_font(default_font_family, '', 12) 
+        pdf.set_font(default_font_family, '', 12)
         if entry_type == "qa":
             pergunta, resposta = content
             pergunta_final = pergunta.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else pergunta
@@ -280,7 +292,7 @@ def gerar_pdf(historico_estado, titulo, nome_usuario):
             stats_for_pdf = stats_text.replace("nan", "-")
             stats_for_pdf = stats_for_pdf.replace("### Estatísticas Descritivas:", "Estatísticas Descritivas:")
             stats_for_pdf = stats_for_pdf.replace("### Informações do DataFrame:", "\nInformações do DataFrame:")
-            stats_for_pdf = stats_for_pdf.replace("|", " ") 
+            stats_for_pdf = stats_for_pdf.replace("|", " ")
             stats_for_pdf = "\n".join([line for line in stats_for_pdf.split('\n') if not (line.strip().replace('-', '').replace(' ', '') == '' and len(line.strip()) > 0) or not line.strip() ])
 
             stats_final = stats_for_pdf.encode('latin-1', 'replace').decode('latin-1') if default_font_family == 'Arial' else stats_for_pdf
@@ -332,13 +344,13 @@ with gr.Blocks(theme='Soft') as app:
     Após definir as entradas no histórico, clique em "Gerar PDF". Assim, será possível
     baixar um PDF com o registro completo das suas interações. Se você quiser analisar um novo dataset,
     basta clicar em "Quero analisar outro dataset" ao final da página.
-    
+
     **Formatos suportados:** CSV (.csv), Excel (.xlsx, .xls, .xlsm, .xlsb)
     ''')
 
     input_arquivo = gr.File(
-        file_count="single", 
-        type="filepath", 
+        file_count="single",
+        type="filepath",
         label="Upload CSV ou Excel",
         file_types=[".csv", ".xlsx", ".xls", ".xlsm", ".xlsb"]
     )
@@ -390,47 +402,47 @@ with gr.Blocks(theme='Soft') as app:
     historico_estado = gr.State(value=[])
 
     input_arquivo.change(
-        fn=carregar_dados, 
-        inputs=[input_arquivo, df_estado], 
-        outputs=[upload_status, tabela_dados, df_estado, output_colunas, output_stats], 
+        fn=carregar_dados,
+        inputs=[input_arquivo, df_estado],
+        outputs=[upload_status, tabela_dados, df_estado, output_colunas, output_stats],
         show_progress=True
     )
     botao_mostrar_stats.click(fn=get_descriptive_stats_and_info, inputs=[df_estado], outputs=output_stats, show_progress=True)
-    
+
     output_stats.change(fn=update_interactivity_add_stats, inputs=output_stats, outputs=botao_add_stats_pdf)
     botao_add_stats_pdf.click(fn=add_stats_to_historico, inputs=[output_stats, historico_estado], outputs=historico_estado, show_progress=False)
-    
+
     botao_submeter.click(fn=processar_pergunta, inputs=[input_pergunta, df_estado], outputs=output_resposta, show_progress=True)
-    
+
     input_pergunta.change(fn=update_interactivity_add_qa, inputs=[input_pergunta, output_resposta], outputs=botao_add_pdf)
     output_resposta.change(fn=update_interactivity_add_qa, inputs=[input_pergunta, output_resposta], outputs=botao_add_pdf)
-    
+
     botao_limpeza.click(fn=limpar_pergunta_resposta, inputs=[], outputs=[input_pergunta, output_resposta])
-    
+
     botao_add_pdf.click(fn=add_historico, inputs=[input_pergunta, output_resposta, historico_estado], outputs=historico_estado)
-    
+
     historico_estado.change(fn=update_interactivity_hist_pdf_buttons, inputs=historico_estado, outputs=[botao_limpar_historico, botao_gerar_pdf])
-    
+
     botao_limpar_historico.click(fn=limpar_historico, inputs=[historico_estado], outputs=historico_estado)
     botao_gerar_pdf.click(fn=gerar_pdf, inputs=[historico_estado, titulo, nome_usuario], outputs=arquivo_pdf, show_progress=True)
 
     def resetar_aplicacao_completo():
         base_outputs = resetar_aplicação_base()
         return list(base_outputs) + [
-            gr.update(interactive=False), 
-            gr.update(interactive=False), 
+            gr.update(interactive=False),
+            gr.update(interactive=False),
             gr.update(interactive=False),
             gr.update(interactive=False)
         ]
 
     botao_resetar.click(
-        fn=resetar_aplicacao_completo, 
-        inputs=[], 
+        fn=resetar_aplicacao_completo,
+        inputs=[],
         outputs=[
-            input_arquivo, upload_status, tabela_dados, output_colunas, 
-            output_stats, arquivo_pdf, historico_estado, input_pergunta, 
+            input_arquivo, upload_status, tabela_dados, output_colunas,
+            output_stats, arquivo_pdf, historico_estado, input_pergunta,
             output_resposta, titulo, nome_usuario,
-            botao_add_pdf, botao_add_stats_pdf, botao_limpar_historico, botao_gerar_pdf 
+            botao_add_pdf, botao_add_stats_pdf, botao_limpar_historico, botao_gerar_pdf
         ]
     )
 
