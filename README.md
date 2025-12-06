@@ -155,13 +155,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Author
-
-Data Analysis Portfolio Project
-
-## Acknowledgments
-
-- Built with [LlamaIndex](https://www.llamaindex.ai/)
-- Powered by [Groq](https://groq.com/)
-- Interface by [Gradio](https://gradio.app/)
